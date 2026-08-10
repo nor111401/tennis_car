@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+tmp/
+training_data/
+ssh_*.py
+_start_tennis_once.cmd
+
+*.jpg
+*.jpeg
+*.png
+*.log
+
+tennis_robot_sim.zip

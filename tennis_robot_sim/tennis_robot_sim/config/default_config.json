@@ -1,0 +1,51 @@
+{
+  "simulation": {
+    "fixed_dt": 0.016666666666666666,
+    "time_scale": 1.0
+  },
+  "window": {
+    "width": 1200,
+    "height": 800,
+    "fps": 60,
+    "panel_width": 300
+  },
+  "court": {
+    "width_m": 10.0,
+    "height_m": 6.0,
+    "grid_step_m": 1.0
+  },
+  "robot": {
+    "initial_x": 1.0,
+    "initial_y": 1.0,
+    "initial_theta_deg": 0.0,
+    "wheel_base": 0.35,
+    "wheel_radius": 0.05,
+    "length": 0.45,
+    "width": 0.35,
+    "max_linear_speed": 1.0,
+    "max_angular_speed": 2.0
+  },
+  "camera": {
+    "field_of_view_deg": 70.0,
+    "max_detection_distance": 4.0,
+    "min_detection_distance": 0.1,
+    "camera_offset_x": 0.0,
+    "camera_offset_y": 0.0
+  },
+  "balls": {
+    "count": 10,
+    "radius_m": 0.0335,
+    "random_seed": 42,
+    "spawn_margin_m": 0.2
+  },
+  "collection": {
+    "distance_m": 0.3,
+    "angle_deg": 30.0,
+    "auto_collect": false
+  },
+  "logging": {
+    "dir": "logs",
+    "console_level": "INFO",
+    "file_level": "DEBUG"
+  }
+}
