@@ -42,10 +42,12 @@ class SearchPhase(str, Enum):
     LEFT_SCAN = "LEFT_SCAN"
     LEFT_OBSERVE = "LEFT_OBSERVE"
     RETURN_FROM_LEFT = "RETURN_FROM_LEFT"
+    RETURN_FROM_LEFT_PAUSE = "RETURN_FROM_LEFT_PAUSE"
     CENTER_SETTLE = "CENTER_SETTLE"
     RIGHT_SCAN = "RIGHT_SCAN"
     RIGHT_OBSERVE = "RIGHT_OBSERVE"
     RETURN_FROM_RIGHT = "RETURN_FROM_RIGHT"
+    RETURN_FROM_RIGHT_PAUSE = "RETURN_FROM_RIGHT_PAUSE"
 
 
 class UartTransport(Protocol):
@@ -87,8 +89,10 @@ class MotorConfig:
     lost_search_enabled: bool = True
     lost_search_delay: float = 10.0
     search_speed_delta: int = 250
-    search_turn_time_ms: int = 1000
-    search_observe_seconds: float = 1.0
+    search_turn_time_ms: int = 350
+    search_steps_per_side: int = 3
+    search_observe_seconds: float = 0.50
+    search_step_pause_seconds: float = 0.15
     search_settle_seconds: float = 0.30
 
     @classmethod
@@ -135,11 +139,19 @@ class MotorConfig:
             ),
             search_turn_time_ms=_env_int(
                 "TENNIS_SEARCH_TURN_MS",
-                1000,
+                350,
+            ),
+            search_steps_per_side=_env_int(
+                "TENNIS_SEARCH_STEPS_PER_SIDE",
+                3,
             ),
             search_observe_seconds=_env_float(
                 "TENNIS_SEARCH_OBSERVE_SECONDS",
-                1.0,
+                0.50,
+            ),
+            search_step_pause_seconds=_env_float(
+                "TENNIS_SEARCH_STEP_PAUSE_SECONDS",
+                0.15,
             ),
             search_settle_seconds=_env_float(
                 "TENNIS_SEARCH_SETTLE_SECONDS",
@@ -179,8 +191,12 @@ class MotorConfig:
             )
         if not 1 <= self.search_turn_time_ms <= 9999:
             raise ValueError("search_turn_time_ms must be between 1 and 9999")
+        if not 1 <= self.search_steps_per_side <= 20:
+            raise ValueError("search_steps_per_side must be between 1 and 20")
         if self.search_observe_seconds <= 0:
             raise ValueError("search_observe_seconds must be positive")
+        if self.search_step_pause_seconds < 0:
+            raise ValueError("search_step_pause_seconds cannot be negative")
         if self.search_settle_seconds < 0:
             raise ValueError("search_settle_seconds cannot be negative")
 
@@ -328,6 +344,7 @@ class MotorController:
         self._lost_since: float | None = None
         self._search_phase = SearchPhase.IDLE
         self._search_deadline = 0.0
+        self._search_step = 0
 
         if self.config.enabled and self._transport is None:
             self._transport = PosixUart(
@@ -388,7 +405,10 @@ class MotorController:
                 - (self._clock() - self._lost_since),
             )
             return f"WAIT {remaining:.1f}s"
-        return self._search_phase.value.replace("_", " ")
+        status = self._search_phase.value.replace("_", " ")
+        if self._search_step:
+            status += f" {self._search_step}/{self.config.search_steps_per_side}"
+        return status
 
     def update(
         self,
@@ -464,6 +484,7 @@ class MotorController:
 
         if self._search_phase is SearchPhase.WAITING:
             if now - self._lost_since >= self.config.lost_search_delay:
+                self._search_step = 1
                 self._begin_search_turn(
                     Motion.TURN_LEFT,
                     SearchPhase.LEFT_SCAN,
@@ -478,20 +499,44 @@ class MotorController:
                 )
         elif self._search_phase is SearchPhase.LEFT_OBSERVE:
             if now >= self._search_deadline:
+                if self._search_step < self.config.search_steps_per_side:
+                    self._search_step += 1
+                    self._begin_search_turn(
+                        Motion.TURN_LEFT,
+                        SearchPhase.LEFT_SCAN,
+                        now,
+                    )
+                else:
+                    self._search_step = 1
+                    self._begin_search_turn(
+                        Motion.TURN_RIGHT,
+                        SearchPhase.RETURN_FROM_LEFT,
+                        now,
+                    )
+        elif self._search_phase is SearchPhase.RETURN_FROM_LEFT:
+            if now >= self._search_deadline:
+                self._set_motion(Motion.STOP, force=True)
+                if self._search_step < self.config.search_steps_per_side:
+                    self._set_search_phase(
+                        SearchPhase.RETURN_FROM_LEFT_PAUSE,
+                        now + self.config.search_step_pause_seconds,
+                    )
+                else:
+                    self._set_search_phase(
+                        SearchPhase.CENTER_SETTLE,
+                        now + self.config.search_settle_seconds,
+                    )
+        elif self._search_phase is SearchPhase.RETURN_FROM_LEFT_PAUSE:
+            if now >= self._search_deadline:
+                self._search_step += 1
                 self._begin_search_turn(
                     Motion.TURN_RIGHT,
                     SearchPhase.RETURN_FROM_LEFT,
                     now,
                 )
-        elif self._search_phase is SearchPhase.RETURN_FROM_LEFT:
-            if now >= self._search_deadline:
-                self._set_motion(Motion.STOP, force=True)
-                self._set_search_phase(
-                    SearchPhase.CENTER_SETTLE,
-                    now + self.config.search_settle_seconds,
-                )
         elif self._search_phase is SearchPhase.CENTER_SETTLE:
             if now >= self._search_deadline:
+                self._search_step = 1
                 self._begin_search_turn(
                     Motion.TURN_RIGHT,
                     SearchPhase.RIGHT_SCAN,
@@ -506,16 +551,40 @@ class MotorController:
                 )
         elif self._search_phase is SearchPhase.RIGHT_OBSERVE:
             if now >= self._search_deadline:
+                if self._search_step < self.config.search_steps_per_side:
+                    self._search_step += 1
+                    self._begin_search_turn(
+                        Motion.TURN_RIGHT,
+                        SearchPhase.RIGHT_SCAN,
+                        now,
+                    )
+                else:
+                    self._search_step = 1
+                    self._begin_search_turn(
+                        Motion.TURN_LEFT,
+                        SearchPhase.RETURN_FROM_RIGHT,
+                        now,
+                    )
+        elif self._search_phase is SearchPhase.RETURN_FROM_RIGHT:
+            if now >= self._search_deadline:
+                self._set_motion(Motion.STOP, force=True)
+                if self._search_step < self.config.search_steps_per_side:
+                    self._set_search_phase(
+                        SearchPhase.RETURN_FROM_RIGHT_PAUSE,
+                        now + self.config.search_step_pause_seconds,
+                    )
+                else:
+                    self._lost_since = now
+                    self._search_step = 0
+                    self._set_search_phase(SearchPhase.WAITING)
+        elif self._search_phase is SearchPhase.RETURN_FROM_RIGHT_PAUSE:
+            if now >= self._search_deadline:
+                self._search_step += 1
                 self._begin_search_turn(
                     Motion.TURN_LEFT,
                     SearchPhase.RETURN_FROM_RIGHT,
                     now,
                 )
-        elif self._search_phase is SearchPhase.RETURN_FROM_RIGHT:
-            if now >= self._search_deadline:
-                self._set_motion(Motion.STOP, force=True)
-                self._lost_since = now
-                self._set_search_phase(SearchPhase.WAITING)
 
         return self._motion if self._motion is not None else Motion.STOP
 
@@ -552,6 +621,7 @@ class MotorController:
         self._lost_since = None
         self._search_phase = SearchPhase.IDLE
         self._search_deadline = 0.0
+        self._search_step = 0
 
     def _motion_intensity(
         self,

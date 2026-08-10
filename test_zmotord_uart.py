@@ -44,7 +44,9 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(MotorConfig().close_area_ratio, 0.44)
         self.assertEqual(MotorConfig().lost_search_delay, 10.0)
         self.assertEqual(MotorConfig().search_speed_delta, 250)
-        self.assertEqual(MotorConfig().search_turn_time_ms, 1000)
+        self.assertEqual(MotorConfig().search_turn_time_ms, 350)
+        self.assertEqual(MotorConfig().search_steps_per_side, 3)
+        self.assertEqual(MotorConfig().search_observe_seconds, 0.50)
 
     def test_configured_forward_pwm(self) -> None:
         self.assertEqual(
@@ -208,9 +210,10 @@ class CommandTests(unittest.TestCase):
 
         self.assertEqual(
             transport.writes,
-            commands_for_motion(Motion.TURN_LEFT, 250, 1000),
+            commands_for_motion(Motion.TURN_LEFT, 250, 350),
         )
         self.assertEqual(controller.search_phase, SearchPhase.LEFT_SCAN)
+        self.assertEqual(controller.search_status, "LEFT SCAN 1/3")
         controller.close()
 
     def test_lost_search_turns_back_before_opposite_scan(self) -> None:
@@ -226,32 +229,47 @@ class CommandTests(unittest.TestCase):
         controller.update("LOST")
         clock.advance(10.0)
         controller.update("LOST")
-        clock.advance(1.001)
-        controller.update("LOST")
-        clock.advance(1.001)
-        controller.update("LOST")
-        clock.advance(1.001)
-        controller.update("LOST")
+
+        for _ in range(3):
+            clock.advance(0.351)
+            controller.update("LOST")
+            clock.advance(0.501)
+            controller.update("LOST")
+
+        for step in range(3):
+            clock.advance(0.351)
+            controller.update("LOST")
+            if step < 2:
+                clock.advance(0.151)
+                controller.update("LOST")
+
         clock.advance(0.301)
         controller.update("LOST")
-        clock.advance(1.001)
-        controller.update("LOST")
-        clock.advance(1.001)
-        controller.update("LOST")
-        clock.advance(1.001)
-        controller.update("LOST")
+
+        for _ in range(3):
+            clock.advance(0.351)
+            controller.update("LOST")
+            clock.advance(0.501)
+            controller.update("LOST")
+
+        for step in range(3):
+            clock.advance(0.351)
+            controller.update("LOST")
+            if step < 2:
+                clock.advance(0.151)
+                controller.update("LOST")
 
         stop_command = commands_for_motion(Motion.STOP, 0, 0)
-        expected = [
-            *commands_for_motion(Motion.TURN_LEFT, 250, 1000),
-            *stop_command,
-            *commands_for_motion(Motion.TURN_RIGHT, 250, 1000),
-            *stop_command,
-            *commands_for_motion(Motion.TURN_RIGHT, 250, 1000),
-            *stop_command,
-            *commands_for_motion(Motion.TURN_LEFT, 250, 1000),
-            *stop_command,
-        ]
+        expected = []
+        for motion in (
+            Motion.TURN_LEFT,
+            Motion.TURN_RIGHT,
+            Motion.TURN_RIGHT,
+            Motion.TURN_LEFT,
+        ):
+            for _ in range(3):
+                expected.extend(commands_for_motion(motion, 250, 350))
+                expected.extend(stop_command)
         self.assertEqual(transport.writes, expected)
         self.assertEqual(controller.search_phase, SearchPhase.WAITING)
         self.assertTrue(controller.search_status.startswith("WAIT "))
@@ -273,7 +291,7 @@ class CommandTests(unittest.TestCase):
         controller.update("CENTER", area_ratio=0.10, target_x=0.50)
 
         expected = [
-            *commands_for_motion(Motion.TURN_LEFT, 250, 1000),
+            *commands_for_motion(Motion.TURN_LEFT, 250, 350),
             *commands_for_motion(Motion.STOP, 0, 0),
             *commands_for_motion(Motion.FORWARD, 280, 850),
         ]
