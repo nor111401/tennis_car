@@ -1,0 +1,25 @@
+[Unit]
+Description=Tennis Robot dry-run control gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+SupplementaryGroups=video dialout
+WorkingDirectory=/home/pi/tennis
+Environment=PYTHONUNBUFFERED=1
+Environment=TENNIS_GATEWAY_TELEMETRY_SECONDS=0.10
+EnvironmentFile=/etc/tennis-robot-gateway.env
+ExecStartPre=/usr/bin/grep -Eq ^TENNIS_GATEWAY_TOKEN=.{20,}$ /etc/tennis-robot-gateway.env
+ExecStart=/home/pi/tennis/.venv-gateway/bin/python -m uvicorn robot_gateway.app:app --host 0.0.0.0 --port 8765
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

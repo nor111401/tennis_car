@@ -18,7 +18,8 @@ Repository：`D:\liugensheng\tennis`，Git 分支 `main`，尚未配置远程仓
 - 颜色候选、轮廓过滤和轻量训练验证器的两级识别。
 - 目标连续帧确认、位置判断、接近停车和丢球分阶段搜索。
 - 通过 `/dev/serial0` 控制四路电机。
-- Windows/安卓共享 PWA 控制终端第一版及通信协议设计，但树莓派实时网关尚未实现。
+- Windows/安卓共享 PWA 控制终端第一版及通信协议设计。
+- 树莓派 WebSocket 干运行网关第一版：真实网络控制链路已打通，但尚未接入摄像头、识别和电机。
 - 独立二维车辆仿真项目。
 
 ## 2. 已知硬件与系统
@@ -51,6 +52,9 @@ Repository：`D:\liugensheng\tennis`，Git 分支 `main`，尚未配置远程仓
 | `test_*.py` | 识别、过滤器和电机状态机测试 |
 | `training_data/` | 本地训练素材，不纳入 Git，但禁止当作缓存删除 |
 | `control_terminal/` | Windows/安卓共享 PWA 控制终端第一版 |
+| `robot_gateway/` | 树莓派 FastAPI WebSocket 干运行网关、控制租约、模式仲裁和安全看门狗 |
+| `requirements-gateway.txt` | 独立网关 Python 依赖，不修改系统 Python 环境 |
+| `deploy/` | 网关 systemd 服务模板和认证部署说明；安装前必须明确批准局域网常驻监听 |
 | `docs/CONTROL_TERMINAL_ARCHITECTURE.md` | 终端协议、模式仲裁和树莓派网关设计 |
 | `tennis_robot_sim/tennis_robot_sim/` | 独立二维运动与拾球仿真平台 |
 | `configure_rpi_uart.sh` | Raspberry Pi UART 配置脚本 |
@@ -178,15 +182,19 @@ PWM中值1500，合法范围500～2500。当前仅支持：
 - 演示传输，可在没有树莓派网关时验证完整UI交互。
 - Node内置测试，无需安装npm第三方包。
 
-未实现：树莓派端 WebSocket/WebRTC 网关。因此当前终端只能运行演示模式，尚不能实际
-观看和遥控小车。接入方案和消息字段见 `docs/CONTROL_TERMINAL_ARCHITECTURE.md`。
+树莓派端第一阶段 WebSocket 干运行网关已实现并在 `192.168.0.108:8765` 完成真实链路验证：
+握手、控制租约、AUTO/MANUAL/PAUSED、安全心跳、急停锁存和手动方向状态均可工作。
+`gatewayDryRun=true`、`motorOutputEnabled=false`，网关不导入 `MotorController`，不会打开 UART。
+
+未实现：WebRTC 视频、识别主循环遥测桥接、真实电机仲裁、REVERSE、正式认证和设备发现。
+因此终端目前只能真实验证控制通道，尚不能观看摄像头或实际遥控车辆。
 
 ## 10. 必须保持的安全约束
 
 1. 树莓派是状态和电机命令唯一权威，终端不得直接控制UART。
 2. 打开终端不会自动进入手动模式；控制权和模式切换必须明确申请。
 3. AUTO/MANUAL切换必须先强制停车并清除旧模式的在途命令。
-4. 手动模式超过约500ms没有服务端认可的心跳必须停车并进入MANUAL_LOST。
+4. 手动模式超过600ms没有服务端认可的心跳必须停车并进入MANUAL_LOST。
 5. 手动断线后不得自动恢复AUTO，必须人工确认。
 6. 急停状态在服务端锁存，优先于全部自动和手动指令。
 7. 电机输出默认关闭；任何真实测试前先进行摄像头、识别和内存传输测试。
@@ -212,8 +220,13 @@ npm start
 
 2026-08-14实际验证结果：JavaScript语法检查通过；Node协议/安全状态测试7/7通过；首页和
 PWA清单本地HTTP烟雾测试通过；Windows Edge 1440×1000无头渲染视觉检查通过；现有
-电机和轻量验证器Python测试16/16通过。候选过滤器测试因本机默认Python缺少`cv2`未运行，
-该限制不是此次终端修改造成的。
+电机和轻量验证器Python测试16/16通过。新增网关纯逻辑测试11/11在Windows和树莓派均通过；
+Windows到树莓派的WebSocket真实链路烟雾测试通过。候选过滤器测试因本机默认Python缺少
+`cv2`未运行，该限制不是此次终端修改造成的。
+
+网关部署状态：树莓派 `/home/pi/tennis/.venv-gateway` 已安装 FastAPI、Uvicorn 和 WebSockets；
+代码已上传并通过编译与测试。临时普通用户进程在验证后已停止，尚未安装为开机 systemd 服务。
+未认证且监听全部网卡的常驻服务具有局域网暴露风险，必须在用户明确批准并确定认证方案后安装。
 
 树莓派安全干运行：
 
@@ -231,11 +244,11 @@ TENNIS_MOTOR_ENABLE=1 python3 tennis_ball_rpi.py
 
 ## 12. 已知问题与下一步
 
-1. 实现树莓派 `RobotStateStore`、控制租约、模式仲裁、安全监控和WebSocket网关。
+1. 将干运行网关接入识别主循环的唯一权威状态，保持自动控制与手动控制互斥。
 2. 将摄像头帧一次编码为WebRTC H.264，目标1280×720、30FPS、低缓存。
 3. 在不改变识别算法的前提下，把主循环状态发布为遥测。
 4. 为手动控制实现并验证REVERSE；未完成前终端后退必须由服务端拒绝。
-5. 增加服务端序号、时间戳、过期命令、500ms看门狗和急停锁存测试。
+5. 增加服务端命令过期、串口故障和真实输出边界测试；序号、600ms看门狗和急停锁存已覆盖。
 6. 对终端进行浏览器视觉检查和Windows安装测试。
 7. 增加设备发现，避免依赖DHCP IP；加入认证，互联网访问只走VPN。
 8. 为自动拾球机构扩展对准、拾取、确认和失败恢复状态。
@@ -248,6 +261,9 @@ TENNIS_MOTOR_ENABLE=1 python3 tennis_ball_rpi.py
   临时凭据辅助文件和重复模拟器压缩包；保留训练数据、模型和协议资料。
 - 2026-08-14：新增 `control_terminal/` PWA第一版、演示模式、WebSocket/WebRTC客户端、
   安全交互、协议测试和 `docs/CONTROL_TERMINAL_ARCHITECTURE.md`。树莓派网关尚未实现。
+- 2026-08-14：新增 `robot_gateway/` WebSocket干运行网关、11项安全核心测试、独立依赖和
+  systemd模板；部署到树莓派虚拟环境并通过真实Windows到树莓派控制链路测试。真实视频、
+  识别和电机未接入，常驻开机服务等待认证与明确授权。
 
 ## 14. 每次修改后的更新检查
 
