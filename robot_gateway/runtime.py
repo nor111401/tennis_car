@@ -359,6 +359,7 @@ class RobotRuntime:
             motion_map = {
                 GatewayMotion.STOP: Motion.STOP,
                 GatewayMotion.FORWARD: Motion.FORWARD,
+                GatewayMotion.REVERSE: Motion.REVERSE,
                 GatewayMotion.TURN_LEFT: Motion.TURN_LEFT,
                 GatewayMotion.TURN_RIGHT: Motion.TURN_RIGHT,
             }

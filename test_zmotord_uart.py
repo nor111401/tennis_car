@@ -87,6 +87,17 @@ class CommandTests(unittest.TestCase):
             ],
         )
 
+    def test_reverse_polarity_is_opposite_to_forward(self) -> None:
+        self.assertEqual(
+            commands_for_motion(Motion.REVERSE, 200, 300),
+            [
+                b"#001P1300T0300!",
+                b"#002P1700T0300!",
+                b"#003P1300T0300!",
+                b"#004P1700T0300!",
+            ],
+        )
+
     def test_turn_commands_match_vehicle_document(self) -> None:
         self.assertEqual(
             commands_for_motion(Motion.TURN_LEFT, 180, 1000),
@@ -176,6 +187,22 @@ class CommandTests(unittest.TestCase):
         )
         self.assertEqual(controller.active_high_pwm, 1800)
         self.assertEqual(controller.active_low_pwm, 1200)
+        controller.close()
+
+    def test_manual_reverse_uses_dynamic_safe_range(self) -> None:
+        transport = MemoryTransport()
+        controller = MotorController(
+            MotorConfig(enabled=True),
+            transport=transport,
+        )
+        transport.writes.clear()
+
+        controller.drive_manual(Motion.REVERSE, 0.5)
+
+        self.assertEqual(
+            transport.writes,
+            commands_for_motion(Motion.REVERSE, 250, 650),
+        )
         controller.close()
 
     def test_manual_zero_speed_stops_and_invalid_speed_is_rejected(self) -> None:

@@ -32,6 +32,7 @@ MAX_PWM = 2500
 class Motion(str, Enum):
     STOP = "STOP"
     FORWARD = "FORWARD"
+    REVERSE = "REVERSE"
     TURN_LEFT = "TURN_LEFT"
     TURN_RIGHT = "TURN_RIGHT"
 
@@ -310,6 +311,8 @@ def commands_for_motion(
 
     if motion is Motion.FORWARD:
         pwm_by_id = {1: high, 2: low, 3: high, 4: low}
+    elif motion is Motion.REVERSE:
+        pwm_by_id = {1: low, 2: high, 3: low, 4: high}
     elif motion is Motion.TURN_LEFT:
         pwm_by_id = {1: low, 2: low, 3: low, 4: low}
     elif motion is Motion.TURN_RIGHT:

@@ -209,7 +209,7 @@ class GatewayCoreTests(unittest.TestCase):
         self.assertFalse(self.core.state.emergency_stop)
         self.assertEqual(self.core.state.mode, GatewayMode.PAUSED)
 
-    def test_reverse_is_explicitly_rejected(self) -> None:
+    def test_reverse_is_accepted_in_manual_mode(self) -> None:
         lease_id = self.request_control()
         self.core.handle(envelope(
             "windows-1", 3, "mode.set", {"mode": "MANUAL", "leaseId": lease_id}
@@ -220,8 +220,9 @@ class GatewayCoreTests(unittest.TestCase):
             "control.command",
             {"direction": "REVERSE", "speed": 0.4, "leaseId": lease_id},
         ))
-        self.assertEqual(reply_reason(result), "REVERSE_NOT_IMPLEMENTED")
-        self.assertEqual(self.core.state.motion, GatewayMotion.STOP)
+        self.assertIsNone(reply_reason(result))
+        self.assertEqual(self.core.state.motion, GatewayMotion.REVERSE)
+        self.assertEqual(self.core.state.manual_speed, 0.4)
 
     def test_dry_run_telemetry_never_claims_motor_online(self) -> None:
         telemetry = self.core.telemetry()

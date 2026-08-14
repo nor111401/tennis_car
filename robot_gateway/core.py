@@ -27,6 +27,7 @@ class GatewayMode(str, Enum):
 class GatewayMotion(str, Enum):
     STOP = "STOP"
     FORWARD = "FORWARD"
+    REVERSE = "REVERSE"
     TURN_LEFT = "TURN_LEFT"
     TURN_RIGHT = "TURN_RIGHT"
 
@@ -107,6 +108,7 @@ class RobotGatewayCore:
     SUPPORTED_MANUAL_MOTIONS = {
         GatewayMotion.STOP.value,
         GatewayMotion.FORWARD.value,
+        GatewayMotion.REVERSE.value,
         GatewayMotion.TURN_LEFT.value,
         GatewayMotion.TURN_RIGHT.value,
     }
@@ -358,8 +360,6 @@ class RobotGatewayCore:
             return self._rejected("MANUAL_MODE_REQUIRED")
 
         raw_motion = payload.get("direction")
-        if raw_motion == "REVERSE":
-            return self._rejected("REVERSE_NOT_IMPLEMENTED")
         if raw_motion not in self.SUPPORTED_MANUAL_MOTIONS:
             return self._rejected("UNSUPPORTED_MOTION")
 

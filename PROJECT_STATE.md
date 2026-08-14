@@ -138,11 +138,9 @@ PWM中值1500，合法范围500～2500。当前仅支持：
 
 - `STOP`：广播 `#255P1500T0000!`。
 - `FORWARD`：001/003高于1500，002/004低于1500。
+- `REVERSE`：001/003低于1500，002/004高于1500，仅供手动控制。
 - `TURN_LEFT`：四路均低于1500。
 - `TURN_RIGHT`：四路均高于1500。
-
-客户端设计中预留了 `REVERSE`，但当前 `zmotord_uart.py` 尚未实现倒车，不得在真实网关
-中直接映射，必须先依据车辆协议增加实现和测试。
 
 自动运动默认值：
 
@@ -193,7 +191,7 @@ PAUSED/MANUAL_LOST/EMERGENCY_STOP 强制 STOP。当前 systemd 明确设置
 自动追球，UART 同时打开；终端取得控制权后可切换 MANUAL 或 PAUSED。用户以电机物理
 总电源开关作为现场启停手段。
 
-未实现：WebRTC/H.264、REVERSE、设备发现，以及真实电机的车轮悬空验证。
+未实现：WebRTC/H.264、设备发现，以及真实电机的车轮悬空验证。
 
 ## 10. 必须保持的安全约束
 
@@ -210,7 +208,7 @@ PAUSED/MANUAL_LOST/EMERGENCY_STOP 强制 STOP。当前 systemd 明确设置
 
 Python测试：
 
-- `test_zmotord_uart.py`：13项电机协议、动态控制和分阶段搜索测试。
+- `test_zmotord_uart.py`：17项电机协议、动态控制、手动倒车和分阶段搜索测试。
 - `test_tennis_candidate_filter.py`：颜色/轮廓、困难负样本、连续帧和距离判断测试。
 - `test_tennis_ball_verifier.py`：特征、裁剪和导出模型加载测试。
 - 本机默认 Python 缺少 `cv2`，因此完整Python测试需在安装OpenCV的环境或树莓派运行。
@@ -232,6 +230,8 @@ PWA清单本地HTTP烟雾测试通过；Windows Edge 1440×1000无头渲染视�
 测试因本机默认Python缺少`cv2`未运行，该限制不是此次终端修改造成的。
 切换为 AUTO 默认启动后，本机上述 Python 测试36/36再次通过，树莓派
 `RuntimeSettingsTests` 2/2通过。
+增加手动倒车后，本机和树莓派 Python 测试均38/38通过，Node测试8/8通过；测试使用内存
+串口，未向实车自动发送倒车命令。
 
 网关部署状态：树莓派 `/home/pi/tennis/.venv-gateway` 已安装 FastAPI、Uvicorn 和 WebSockets；
 `tennis-robot-gateway.service` 已启用并正在运行，开机自动启动。访问令牌仅保存在树莓派
@@ -260,10 +260,9 @@ TENNIS_MOTOR_ENABLE=1 python3 tennis_ball_rpi.py
 1. 用户通过 Windows 终端验证真实手动方向、STOP、心跳失联停车和模式切换；现场启停由
    电机物理总电源开关控制。
 2. 测量当前 JPEG WebSocket 的端到端延迟和CPU占用；需要更低带宽时升级为WebRTC/H.264。
-3. 为手动控制实现并验证REVERSE；未完成前终端后退必须由服务端拒绝。
-4. 增加命令发送时间过期、串口写故障和进程退出强制停车的硬件边界测试。
-5. 增加设备发现，避免依赖DHCP IP；互联网访问仍只允许走VPN。
-6. 为自动拾球机构扩展对准、拾取、确认和失败恢复状态。
+3. 增加命令发送时间过期、串口写故障和进程退出强制停车的硬件边界测试。
+4. 增加设备发现，避免依赖DHCP IP；互联网访问仍只允许走VPN。
+5. 为自动拾球机构扩展对准、拾取、确认和失败恢复状态。
 
 ## 13. 变更记录
 
@@ -285,6 +284,8 @@ TENNIS_MOTOR_ENABLE=1 python3 tennis_ball_rpi.py
 - 2026-08-14：用户说明电机具备物理总电源开关并明确授权跳过悬空测试；systemd 部署切换
   为 `TENNIS_MOTOR_ENABLE=1` 和 `TENNIS_GATEWAY_BOOT_MODE=AUTO`，启动后直接自动追球，
   并允许用户从 Windows 终端接管。
+- 2026-08-14：增加手动 `REVERSE` 全链路；001/003使用低PWM、002/004使用高PWM，复用
+  手动速度滑块和600ms心跳看门狗。自动追球不使用倒车，测试未向实车发送运动命令。
 
 ## 14. 每次修改后的更新检查
 
