@@ -2,8 +2,8 @@
 
 更新时间：2026-08-14
 
-状态：终端第一版与树莓派 WebSocket 干运行网关已实现；摄像头、识别、WebRTC 和
-UART/电机仍未接入网关。
+状态：终端、认证网关、共享摄像头/识别运行时、JPEG视频和统一电机仲裁已实现；
+真实电机输出保持关闭，等待车轮悬空测试。
 
 ## 1. 目标和边界
 
@@ -20,11 +20,11 @@ Windows/安卓终端是观察和人工介入界面，不是小车自动算法的
 
 ```text
 摄像头 ─┬─> 识别管线 ─> 自动状态机 ─┐
-        └─> H.264 编码 ─> WebRTC     │
+        └─> JPEG最新帧 ─> 视频WS      │
                                          ├─> 模式仲裁 ─> 安全监控 ─> MotorController ─> UART
 Windows/Android ─> WebSocket 网关 ─> 控制权 ─┘
                       ^
-                      └─ 遥测、确认、错误和 WebRTC 信令
+                      └─ 遥测、确认、错误和视频端点协商
 ```
 
 树莓派新增模块建议拆分为：
@@ -34,14 +34,15 @@ Windows/Android ─> WebSocket 网关 ─> 控制权 ─┘
 - `ModeArbiter`：在 AUTO、MANUAL、PAUSED、MANUAL_LOST、EMERGENCY_STOP 间切换。
 - `SafetySupervisor`：心跳看门狗、过期指令过滤、急停锁存和故障停车。
 - `TelemetryPublisher`：以 10～20Hz 发布状态，不阻塞识别主循环。
-- `VideoStreamer`：从同一摄像头帧源进行一次 H.264 编码并通过 WebRTC发送。
-- `ControlGateway`：WebSocket 会话、认证、协议版本和 WebRTC 信令。
+- `VideoStreamer`：从同一摄像头帧源编码JPEG并保持单槽最新帧，慢客户端不堆积旧画面。
+- `ControlGateway`：WebSocket 会话、认证、协议版本和视频端点协商。
 
 ## 3. 实时通道
 
 | 通道 | 协议 | 方向 | 用途 |
 |---|---|---|---|
-| 视频媒体 | WebRTC/H.264 | 树莓派到终端 | 1280×720、目标30FPS、低缓存 |
+| 当前视频 | WebSocket/JPEG | 树莓派到终端 | 认证、单槽最新帧、默认15FPS、低缓存 |
+| 未来视频 | WebRTC/H.264 | 树莓派到终端 | 带宽优化目标，1280×720、30FPS |
 | 控制与状态 | WebSocket | 双向 | 模式、方向、心跳、遥测和确认 |
 | 初始配置 | HTTP/HTTPS | 双向 | 设备信息、认证和非实时参数 |
 
@@ -74,7 +75,7 @@ Windows/Android ─> WebSocket 网关 ─> 控制权 ─┘
 - `mode.set`：申请切换 AUTO、MANUAL 或 PAUSED。
 - `control.command`：方向、0～1速度、按压状态和租约ID。
 - `safety.estop`：紧急停车锁存或申请解除。
-- `video.request` / `video.answer` / `video.ice`：WebRTC 信令。
+- `video.request`：请求视频能力与独立认证视频端点。
 
 主要服务端消息：
 
@@ -84,7 +85,7 @@ Windows/Android ─> WebSocket 网关 ─> 控制权 ─┘
 - `state.telemetry`：识别、运动、设备健康和当前控制者。
 - `safety.estop`：急停的权威状态。
 - `command.rejected` / `server.error`。
-- `video.offer` / `video.ice`。
+- `video.ready`：返回视频传输类型和独立 `/video` WebSocket 端点。
 
 ## 5. 模式切换时序
 
@@ -154,21 +155,19 @@ MANUAL 转 AUTO：
 
 ## 7. 第一版实现与待办
 
-`control_terminal/` 已包含可运行 PWA、演示传输、WebSocket 客户端、WebRTC 客户端、
-按住式控制、心跳、急停界面和协议测试。`robot_gateway/` 已包含 FastAPI WebSocket
-入口、控制租约、模式仲裁、600ms 心跳看门狗、急停锁存和遥测发布。该网关当前强制
-干运行：不导入串口控制模块、不打开 UART、不调用电机。
+`control_terminal/` 已包含可运行 PWA、演示传输、控制/视频 WebSocket 客户端、按住式
+控制、心跳、急停界面和协议测试。`robot_gateway/` 已包含 FastAPI WebSocket入口、共享
+摄像头与识别运行时、单槽JPEG视频、控制租约、模式仲裁、600ms心跳看门狗、急停锁存、
+遥测发布和 `MotorController` 仲裁。当前部署以 `TENNIS_MOTOR_ENABLE=0` 保持真实输出关闭。
 
-第一阶段真实链路已经验证：Windows 终端可与树莓派完成握手、取得租约、切换 MANUAL、
-发送 FORWARD、观察干运行状态、STOP、切换 PAUSED 并释放租约。视频请求和 REVERSE
-仍由服务端明确拒绝。
+真实链路已经验证：Windows 终端可与树莓派完成握手、取得租约、切换 MANUAL、发送
+FORWARD、STOP、切换 PAUSED 并释放租约；独立认证视频通道已收到有效实时JPEG帧。
+REVERSE仍由服务端明确拒绝。
 
 在真实车辆测试前仍需：
 
-1. 把现有识别循环重构为可发布帧与遥测、但不改变识别算法的服务。
-2. 将干运行网关接入识别主循环的权威状态存储，避免形成两个互相冲突的车辆状态源。
+1. 在车轮悬空条件下验证真实UART输出、模式切换、失联停车和急停。
+2. 测量JPEG视频端到端延迟和CPU占用，再决定是否升级WebRTC/H.264。
 3. 给 `MotorController` 增加明确的 REVERSE 手动动作；当前自动程序没有倒车路径。
-4. 在接入真实 `MotorController` 前增加命令过期、串口故障和进程退出强制停车测试。
-5. 在车轮悬空条件下测试模式切换，再进行落地低速测试。
-6. 测量端到端视频延迟，并调整编码分辨率、码率和缓冲策略。
-7. 访问令牌认证已部署；跨互联网使用时仍只通过 VPN，不直接暴露控制端口。
+4. 增加命令过期、串口故障和进程退出强制停车的硬件边界测试。
+5. 访问令牌认证已部署；跨互联网使用时仍只通过 VPN，不直接暴露控制端口。

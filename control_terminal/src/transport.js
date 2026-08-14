@@ -14,7 +14,7 @@ export class RobotTransport {
   }
 
   connect(url, token = "") {
-    this.close(false);
+    this.close();
     this.onStatus("CONNECTING", `正在连接 ${url}`);
 
     return new Promise((resolve, reject) => {
@@ -26,7 +26,7 @@ export class RobotTransport {
         this.send("session.hello", {
           token,
           client: "tennis-control-terminal",
-          capabilities: ["manual-control", "telemetry", "webrtc-video"],
+          capabilities: ["manual-control", "telemetry", "websocket-jpeg-video"],
         });
         resolve();
       }, { once: true });
@@ -61,17 +61,9 @@ export class RobotTransport {
     return true;
   }
 
-  close(sendRelease = true) {
+  close() {
     if (!this.socket) {
       return;
-    }
-    if (sendRelease && this.socket.readyState === WebSocket.OPEN) {
-      this.send("control.command", {
-        direction: Motion.STOP,
-        speed: 0,
-        pressed: false,
-      });
-      this.send("control.release", {});
     }
     this.socket.close(1000, "terminal closed");
     this.socket = null;

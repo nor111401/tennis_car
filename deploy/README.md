@@ -1,14 +1,23 @@
 # 树莓派网关部署
 
-网关当前是安全干运行版本：不打开 UART、不调用电机、没有视频。即便如此，常驻监听的
-控制端口也必须启用认证，不能把无令牌服务直接设为开机启动。
+网关已经接入摄像头、识别、遥测、认证视频和统一电机仲裁。当前 systemd 模板明确设置
+`TENNIS_MOTOR_ENABLE=0`，因此不打开 UART、不驱动电机。常驻控制端口必须启用认证。
 
 ## 已完成
 
 - 源码目录：`/home/pi/tennis/robot_gateway`
 - 独立虚拟环境：`/home/pi/tennis/.venv-gateway`
-- 端口：TCP 8765，WebSocket 路径 `/ws`
+- 端口：TCP 8765，控制路径 `/ws`，视频路径 `/video`
 - 健康检查：`http://树莓派地址:8765/health`
+
+网关虚拟环境需要访问 Raspberry Pi OS 提供的 Picamera2/NumPy，以及 `pi` 用户现有的
+OpenCV。安装或重建虚拟环境后执行：
+
+```bash
+sh /home/pi/tennis/deploy/configure_gateway_venv.sh
+```
+
+脚本通过 `.pth` 追加系统包路径，不使用会覆盖 FastAPI 依赖优先级的全局 `PYTHONPATH`。
 
 ## 安装为开机服务
 

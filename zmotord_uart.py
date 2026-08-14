@@ -470,6 +470,37 @@ class MotorController:
         )
         return desired
 
+    def drive_manual(self, motion: Motion, intensity: float) -> Motion:
+        """Apply a validated manual command using the configured safe range."""
+        if not isinstance(intensity, (int, float)) or isinstance(intensity, bool):
+            raise ValueError("intensity must be a number")
+        if not 0.0 <= float(intensity) <= 1.0:
+            raise ValueError("intensity must be within [0, 1]")
+
+        self._reset_lost_search()
+        if motion is Motion.STOP or intensity == 0:
+            self._set_motion(Motion.STOP)
+            return Motion.STOP
+
+        speed_delta = self._quantized_interpolation(
+            self.config.min_speed_delta,
+            self.config.speed_delta,
+            float(intensity),
+            step=10,
+        )
+        command_time_ms = self._quantized_interpolation(
+            self.config.min_command_time_ms,
+            self.config.command_time_ms,
+            float(intensity),
+            step=50,
+        )
+        self._set_motion(
+            motion,
+            speed_delta=speed_delta,
+            command_time_ms=command_time_ms,
+        )
+        return motion
+
     def _update_lost_search(self) -> Motion:
         now = self._clock()
         if not self.config.lost_search_enabled:

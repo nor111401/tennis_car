@@ -160,6 +160,32 @@ class CommandTests(unittest.TestCase):
         )
         controller.close()
 
+    def test_manual_drive_maps_slider_to_safe_pwm_range(self) -> None:
+        transport = MemoryTransport()
+        controller = MotorController(
+            MotorConfig(enabled=True),
+            transport=transport,
+        )
+        transport.writes.clear()
+
+        controller.drive_manual(Motion.TURN_LEFT, 1.0)
+
+        self.assertEqual(
+            transport.writes,
+            commands_for_motion(Motion.TURN_LEFT, 300, 1000),
+        )
+        self.assertEqual(controller.active_high_pwm, 1800)
+        self.assertEqual(controller.active_low_pwm, 1200)
+        controller.close()
+
+    def test_manual_zero_speed_stops_and_invalid_speed_is_rejected(self) -> None:
+        controller = MotorController(MotorConfig(enabled=False))
+        controller.drive_manual(Motion.FORWARD, 0.5)
+        self.assertEqual(controller.drive_manual(Motion.FORWARD, 0.0), Motion.STOP)
+        with self.assertRaises(ValueError):
+            controller.drive_manual(Motion.FORWARD, 1.1)
+        controller.close()
+
     def test_turn_strength_grows_toward_image_edge(self) -> None:
         near_transport = MemoryTransport()
         near_controller = MotorController(

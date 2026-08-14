@@ -11,7 +11,7 @@ import {
   reduceState,
 } from "./state.js";
 import { DemoTransport, RobotTransport } from "./transport.js";
-import { WebRtcVideoSession } from "./video.js";
+import { RobotVideoSession } from "./video.js";
 
 const elements = Object.fromEntries(
   [...document.querySelectorAll("[id]")].map((element) => [element.id, element]),
@@ -25,12 +25,15 @@ let transport = null;
 let activeMotion = Motion.STOP;
 let driveTimer = null;
 
-const videoSession = new WebRtcVideoSession(
+const videoSession = new RobotVideoSession(
   elements["robot-video"],
   (type, payload) => transport?.send(type, payload),
   (status) => {
     elements["video-status"].textContent = status;
     logEvent(status);
+  },
+  () => {
+    elements["video-placeholder"].hidden = true;
   },
 );
 
@@ -85,6 +88,9 @@ function connectDemo() {
 
 function disconnect() {
   stopDrive(true);
+  if (transport && state.hasControl) {
+    transport.send("control.release", { leaseId: state.leaseId });
+  }
   videoSession.close();
   if (transport) {
     const previous = transport;
@@ -132,14 +138,11 @@ function handleMessage(message) {
       dispatch({ type: "estop", active: Boolean(payload.active) });
       logEvent(payload.active ? "紧急停车已锁定" : "紧急停车已解除，当前保持暂停");
       break;
-    case "video.offer":
-      videoSession.handleOffer(payload).catch((error) => {
-        logEvent(`视频协商失败：${error.message}`);
-      });
-      break;
-    case "video.ice":
-      videoSession.addIceCandidate(payload).catch((error) => {
-        logEvent(`视频网络候选失败：${error.message}`);
+    case "video.ready":
+      videoSession.connect(payload, {
+        controlUrl: elements.endpoint.value.trim(),
+        token: elements.token.value,
+        terminalId,
       });
       break;
     case "command.rejected":
@@ -424,10 +427,6 @@ document.addEventListener("visibilitychange", () => {
     stopDrive(true);
   }
 });
-elements["robot-video"].addEventListener("playing", () => {
-  elements["video-placeholder"].hidden = true;
-});
-
 window.setInterval(() => {
   if (transport && state.hasControl) {
     transport.send("control.heartbeat", {

@@ -1,4 +1,4 @@
-"""FastAPI WebSocket entry point for the dry-run robot gateway."""
+"""FastAPI entry point for control, telemetry and low-latency video."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import hmac
+import json
 import os
 from typing import Any
 
@@ -13,6 +14,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .core import RobotGatewayCore
 from .protocol import ClientEnvelope, ProtocolError, ServerMessageFactory
+from .runtime import RobotRuntime
 
 
 @dataclass(frozen=True)
@@ -91,10 +93,18 @@ class ConnectionManager:
 def create_app(
     core: RobotGatewayCore | None = None,
     settings: GatewaySettings | None = None,
+    runtime: RobotRuntime | None = None,
 ) -> FastAPI:
     gateway_core = core or RobotGatewayCore()
     gateway_settings = settings or GatewaySettings.from_environment()
+    gateway_runtime = runtime or RobotRuntime(gateway_core)
     manager = ConnectionManager()
+
+    def token_is_valid(supplied_token: str) -> bool:
+        return not gateway_settings.token or hmac.compare_digest(
+            supplied_token,
+            gateway_settings.token,
+        )
 
     async def telemetry_loop() -> None:
         while True:
@@ -104,6 +114,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI):
+        gateway_runtime.start()
         task = asyncio.create_task(telemetry_loop(), name="gateway-telemetry")
         try:
             yield
@@ -113,32 +124,39 @@ def create_app(
                 await task
             except asyncio.CancelledError:
                 pass
+            await asyncio.to_thread(gateway_runtime.stop)
 
     application = FastAPI(
         title="Tennis Robot Gateway",
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
     )
     application.state.gateway_core = gateway_core
     application.state.connection_manager = manager
+    application.state.robot_runtime = gateway_runtime
 
     @application.get("/")
     async def root() -> dict[str, Any]:
         return {
             "service": "tennis-robot-gateway",
-            "version": "0.1.0",
-            "dryRun": True,
+            "version": "0.2.0",
+            "dryRun": not gateway_core.telemetry()["motorOutputEnabled"],
             "websocket": "/ws",
+            "videoWebsocket": "/video",
         }
 
     @application.get("/health")
     async def health() -> dict[str, Any]:
+        telemetry = gateway_core.telemetry()
         return {
-            "status": "ok",
-            "dryRun": True,
-            "motorOutputEnabled": False,
-            "connectedClients": len(gateway_core.sessions),
-            "mode": gateway_core.state.mode.value,
+            "status": "degraded" if telemetry["runtimeError"] else "ok",
+            "dryRun": telemetry["gatewayDryRun"],
+            "motorOutputEnabled": telemetry["motorOutputEnabled"],
+            "cameraOnline": telemetry["cameraOnline"],
+            "videoReady": telemetry["videoReady"],
+            "connectedClients": telemetry["connectedClients"],
+            "mode": telemetry["mode"],
+            "runtimeError": telemetry["runtimeError"],
         }
 
     @application.websocket("/ws")
@@ -152,10 +170,7 @@ def create_app(
                 await websocket.close(code=1008, reason="session.hello required")
                 return
             supplied_token = str(hello.payload.get("token", ""))
-            if gateway_settings.token and not hmac.compare_digest(
-                supplied_token,
-                gateway_settings.token,
-            ):
+            if not token_is_valid(supplied_token):
                 await websocket.close(code=1008, reason="authentication failed")
                 return
 
@@ -208,6 +223,36 @@ def create_app(
                 await manager.remove(terminal_id)
                 if gateway_core.disconnect(terminal_id):
                     await manager.broadcast_telemetry(gateway_core.telemetry())
+
+    @application.websocket("/video")
+    async def video_endpoint(websocket: WebSocket) -> None:
+        await websocket.accept()
+        try:
+            raw = await asyncio.wait_for(websocket.receive_text(), timeout=5.0)
+            hello = json.loads(raw)
+            if not isinstance(hello, dict):
+                raise ValueError("video hello must be an object")
+            supplied_token = str(hello.get("token", ""))
+            terminal_id = str(hello.get("terminalId", "")).strip()
+            if not terminal_id or not token_is_valid(supplied_token):
+                await websocket.close(code=1008, reason="authentication failed")
+                return
+
+            sequence = 0
+            while True:
+                frame = await asyncio.to_thread(
+                    gateway_runtime.wait_for_frame,
+                    sequence,
+                    1.0,
+                )
+                if frame is None:
+                    continue
+                sequence, jpeg, _ = frame
+                await websocket.send_bytes(jpeg)
+        except (asyncio.TimeoutError, json.JSONDecodeError, ValueError):
+            await websocket.close(code=1008, reason="invalid video handshake")
+        except (RuntimeError, WebSocketDisconnect):
+            pass
 
     return application
 

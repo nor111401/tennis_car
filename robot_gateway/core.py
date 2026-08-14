@@ -1,8 +1,7 @@
-"""Pure safety and mode-arbitration core for the network gateway.
+"""Thread-safe safety and mode-arbitration core for the robot gateway.
 
-This first gateway phase is deliberately dry-run only. It never opens UART and
-never calls MotorController. The pure core is kept independent of FastAPI so
-all safety transitions can be tested without network or vehicle hardware.
+Hardware access remains outside this module. The network event loop and the
+camera/motor worker threads exchange only validated state through this core.
 """
 
 from __future__ import annotations
@@ -10,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 import secrets
+from threading import RLock
 import time
 from typing import Any, Callable
 
@@ -57,12 +57,16 @@ class GatewayState:
     ball_y: float | None = None
     ball_width: float | None = None
     ball_height: float | None = None
-    search_phase: str = "GATEWAY_DRY_RUN"
+    search_phase: str = "STARTING"
     camera_fps: float = 0.0
     inference_ms: float = 0.0
     latency_ms: float | None = None
+    camera_online: bool = False
+    video_available: bool = False
     motor_online: bool = False
     uart_online: bool = False
+    motor_output_enabled: bool = False
+    runtime_error: str | None = None
     manual_speed: float = 0.0
 
     def telemetry(self, connected_clients: int) -> dict[str, Any]:
@@ -81,10 +85,14 @@ class GatewayState:
             "cameraFps": self.camera_fps,
             "inferenceMs": self.inference_ms,
             "latencyMs": self.latency_ms,
+            "cameraOnline": self.camera_online,
+            "videoReady": self.video_available,
             "motorOnline": self.motor_online,
             "uartOnline": self.uart_online,
+            "motorOutputEnabled": self.motor_output_enabled,
+            "runtimeError": self.runtime_error,
             "connectedClients": connected_clients,
-            "gatewayDryRun": True,
+            "gatewayDryRun": not self.motor_output_enabled,
         }
 
 
@@ -108,6 +116,7 @@ class RobotGatewayCore:
         self.state = GatewayState()
         self.sessions: dict[str, ClientSession] = {}
         self.lease: ControlLease | None = None
+        self._lock = RLock()
 
     def open_session(
         self,
@@ -115,69 +124,145 @@ class RobotGatewayCore:
         terminal_name: str,
         first_sequence: int,
     ) -> dict[str, Any]:
-        self.sessions[terminal_id] = ClientSession(
-            terminal_id=terminal_id,
-            name=terminal_name[:80] or "未命名终端",
-            last_sequence=first_sequence,
-        )
-        return {
-            "robotName": "Tennis Rover",
-            "protocolVersion": 1,
-            "gatewayDryRun": True,
-            "videoReady": False,
-            "motorOutputEnabled": False,
-            "supportedModes": ["AUTO", "MANUAL", "PAUSED"],
-            "supportedManualMotions": sorted(self.SUPPORTED_MANUAL_MOTIONS),
-        }
+        with self._lock:
+            self.sessions[terminal_id] = ClientSession(
+                terminal_id=terminal_id,
+                name=terminal_name[:80] or "未命名终端",
+                last_sequence=first_sequence,
+            )
+            return {
+                "robotName": "Tennis Rover",
+                "protocolVersion": 1,
+                "gatewayDryRun": not self.state.motor_output_enabled,
+                "videoReady": self.state.video_available,
+                "motorOutputEnabled": self.state.motor_output_enabled,
+                "supportedModes": ["AUTO", "MANUAL", "PAUSED"],
+                "supportedManualMotions": sorted(self.SUPPORTED_MANUAL_MOTIONS),
+            }
 
     def disconnect(self, terminal_id: str) -> bool:
-        self.sessions.pop(terminal_id, None)
-        if self.lease is None or self.lease.terminal_id != terminal_id:
-            return False
-        manual_was_active = self.state.mode is GatewayMode.MANUAL
-        self._release_lease()
-        if manual_was_active:
-            self.state.mode = GatewayMode.MANUAL_LOST
-            self._force_stop()
-        return True
+        with self._lock:
+            self.sessions.pop(terminal_id, None)
+            if self.lease is None or self.lease.terminal_id != terminal_id:
+                return False
+            manual_was_active = self.state.mode is GatewayMode.MANUAL
+            self._release_lease()
+            if manual_was_active:
+                self.state.mode = GatewayMode.MANUAL_LOST
+                self._force_stop()
+            return True
 
     def handle(self, envelope: ClientEnvelope) -> CoreResult:
-        session = self.sessions.get(envelope.terminal_id)
-        if session is None:
-            return self._rejected("SESSION_NOT_ESTABLISHED")
-        if envelope.sequence <= session.last_sequence:
-            return self._rejected("STALE_SEQUENCE")
-        session.last_sequence = envelope.sequence
+        with self._lock:
+            session = self.sessions.get(envelope.terminal_id)
+            if session is None:
+                return self._rejected("SESSION_NOT_ESTABLISHED")
+            if envelope.sequence <= session.last_sequence:
+                return self._rejected("STALE_SEQUENCE")
+            session.last_sequence = envelope.sequence
 
-        handlers = {
-            "control.request": self._handle_control_request,
-            "control.release": self._handle_control_release,
-            "control.heartbeat": self._handle_heartbeat,
-            "mode.set": self._handle_mode_set,
-            "control.command": self._handle_control_command,
-            "safety.estop": self._handle_estop,
-            "video.request": self._handle_video_request,
-        }
-        handler = handlers.get(envelope.type)
-        if handler is None:
-            return self._rejected("UNSUPPORTED_MESSAGE_TYPE")
-        return handler(session, envelope.payload)
+            handlers = {
+                "control.request": self._handle_control_request,
+                "control.release": self._handle_control_release,
+                "control.heartbeat": self._handle_heartbeat,
+                "mode.set": self._handle_mode_set,
+                "control.command": self._handle_control_command,
+                "safety.estop": self._handle_estop,
+                "video.request": self._handle_video_request,
+            }
+            handler = handlers.get(envelope.type)
+            if handler is None:
+                return self._rejected("UNSUPPORTED_MESSAGE_TYPE")
+            return handler(session, envelope.payload)
 
     def tick(self) -> bool:
-        if self.lease is None:
-            return False
-        if self.clock() - self.lease.last_heartbeat <= self.LEASE_TIMEOUT_SECONDS:
-            return False
+        with self._lock:
+            if self.lease is None:
+                return False
+            if self.clock() - self.lease.last_heartbeat <= self.LEASE_TIMEOUT_SECONDS:
+                return False
 
-        manual_was_active = self.state.mode is GatewayMode.MANUAL
-        self._release_lease()
-        if manual_was_active:
-            self.state.mode = GatewayMode.MANUAL_LOST
-            self._force_stop()
-        return True
+            manual_was_active = self.state.mode is GatewayMode.MANUAL
+            self._release_lease()
+            if manual_was_active:
+                self.state.mode = GatewayMode.MANUAL_LOST
+                self._force_stop()
+            return True
 
     def telemetry(self) -> dict[str, Any]:
-        return self.state.telemetry(len(self.sessions))
+        with self._lock:
+            return self.state.telemetry(len(self.sessions))
+
+    def control_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "mode": self.state.mode,
+                "motion": self.state.motion,
+                "manual_speed": self.state.manual_speed,
+                "emergency_stop": self.state.emergency_stop,
+            }
+
+    def configure_runtime(
+        self,
+        *,
+        video_available: bool,
+        motor_output_enabled: bool,
+        boot_mode: GatewayMode | None = None,
+    ) -> None:
+        with self._lock:
+            self.state.video_available = video_available
+            self.state.motor_output_enabled = motor_output_enabled
+            if boot_mode is not None:
+                self.state.mode = boot_mode
+                self._force_stop()
+            self.state.search_phase = "INITIALIZING"
+
+    def update_perception(
+        self,
+        *,
+        detected: bool,
+        confidence: float,
+        ball_x: float | None,
+        ball_y: float | None,
+        ball_width: float | None,
+        ball_height: float | None,
+        camera_fps: float,
+        inference_ms: float,
+        camera_online: bool = True,
+    ) -> None:
+        with self._lock:
+            self.state.ball_detected = detected
+            self.state.confidence = confidence
+            self.state.ball_x = ball_x
+            self.state.ball_y = ball_y
+            self.state.ball_width = ball_width
+            self.state.ball_height = ball_height
+            self.state.camera_fps = camera_fps
+            self.state.inference_ms = inference_ms
+            self.state.camera_online = camera_online
+
+    def update_runtime_motion(
+        self,
+        motion: GatewayMotion,
+        *,
+        search_phase: str,
+        motor_online: bool,
+        uart_online: bool,
+    ) -> None:
+        with self._lock:
+            self.state.motion = motion
+            self.state.search_phase = search_phase
+            self.state.motor_online = motor_online
+            self.state.uart_online = uart_online
+
+    def report_runtime_error(self, message: str, *, camera_failed: bool = False) -> None:
+        with self._lock:
+            self._force_stop()
+            self.state.runtime_error = message[:300]
+            if camera_failed:
+                self.state.camera_online = False
+                self.state.camera_fps = 0.0
+            self.state.search_phase = "RUNTIME_ERROR"
 
     def _handle_control_request(
         self,
@@ -322,7 +407,13 @@ class RobotGatewayCore:
         session: ClientSession,
         payload: dict[str, Any],
     ) -> CoreResult:
-        return self._rejected("VIDEO_NOT_READY")
+        if not self.state.video_available:
+            return self._rejected("VIDEO_NOT_READY")
+        return CoreResult((("video.ready", {
+            "transport": "websocket-jpeg",
+            "endpoint": "/video",
+            "mimeType": "image/jpeg",
+        }),))
 
     def _validate_lease(
         self,

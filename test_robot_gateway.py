@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
+from unittest.mock import patch
 
 from robot_gateway.core import (
     GatewayMode,
@@ -9,6 +11,7 @@ from robot_gateway.core import (
     RobotGatewayCore,
 )
 from robot_gateway.protocol import ClientEnvelope, ProtocolError
+from robot_gateway.runtime import LatestJpegFrame, RuntimeSettings
 
 
 class FakeClock:
@@ -225,6 +228,90 @@ class GatewayCoreTests(unittest.TestCase):
         self.assertTrue(telemetry["gatewayDryRun"])
         self.assertFalse(telemetry["motorOnline"])
         self.assertFalse(telemetry["uartOnline"])
+
+    def test_video_request_returns_authenticated_stream_descriptor(self) -> None:
+        self.core.configure_runtime(
+            video_available=True,
+            motor_output_enabled=False,
+        )
+        result = self.core.handle(envelope(
+            "windows-1",
+            2,
+            "video.request",
+        ))
+        self.assertEqual(result.replies[0][0], "video.ready")
+        self.assertEqual(result.replies[0][1]["endpoint"], "/video")
+        self.assertEqual(result.replies[0][1]["transport"], "websocket-jpeg")
+
+    def test_runtime_telemetry_reports_camera_and_detection(self) -> None:
+        self.core.configure_runtime(
+            video_available=True,
+            motor_output_enabled=False,
+        )
+        self.core.update_perception(
+            detected=True,
+            confidence=0.83,
+            ball_x=0.4,
+            ball_y=0.6,
+            ball_width=0.1,
+            ball_height=0.12,
+            camera_fps=22.0,
+            inference_ms=18.0,
+        )
+        telemetry = self.core.telemetry()
+        self.assertTrue(telemetry["cameraOnline"])
+        self.assertTrue(telemetry["videoReady"])
+        self.assertTrue(telemetry["ballDetected"])
+        self.assertEqual(telemetry["confidence"], 0.83)
+
+    def test_runtime_boot_mode_paused_forces_safe_stop(self) -> None:
+        self.core.state.mode = GatewayMode.AUTO
+        self.core.state.motion = GatewayMotion.FORWARD
+
+        self.core.configure_runtime(
+            video_available=True,
+            motor_output_enabled=False,
+            boot_mode=GatewayMode.PAUSED,
+        )
+
+        self.assertEqual(self.core.state.mode, GatewayMode.PAUSED)
+        self.assertEqual(self.core.state.motion, GatewayMotion.STOP)
+
+
+class RuntimeSettingsTests(unittest.TestCase):
+    def test_environment_defaults_to_paused_boot_mode(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = RuntimeSettings.from_environment()
+
+        self.assertEqual(settings.boot_mode, GatewayMode.PAUSED)
+
+    def test_manual_boot_mode_is_rejected(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"TENNIS_GATEWAY_BOOT_MODE": GatewayMode.MANUAL.value},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "AUTO or PAUSED"):
+                RuntimeSettings.from_environment()
+
+
+class LatestJpegFrameTests(unittest.TestCase):
+    def test_slow_reader_gets_latest_frame(self) -> None:
+        frames = LatestJpegFrame()
+        frames.publish(b"first", 1.0)
+        frames.publish(b"latest", 2.0)
+
+        sequence, jpeg, captured_at = frames.wait_after(0, timeout=0.0)
+
+        self.assertEqual(sequence, 2)
+        self.assertEqual(jpeg, b"latest")
+        self.assertEqual(captured_at, 2.0)
+        frames.close()
+
+    def test_closed_frame_buffer_wakes_without_data(self) -> None:
+        frames = LatestJpegFrame()
+        frames.close()
+        self.assertIsNone(frames.wait_after(0, timeout=0.0))
 
 
 if __name__ == "__main__":

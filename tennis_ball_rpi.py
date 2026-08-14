@@ -122,6 +122,30 @@ class ColorOnlyRunner:
         }
 
 
+def build_runner_context(project_folder):
+    """Select the same inference backend for CLI and gateway execution."""
+    model_path = find_model_file(project_folder)
+    if model_path is None:
+        verifier_path = project_folder / "tennis_ball_verifier.npz"
+        if verifier_path.exists():
+            print(f"Model: {verifier_path.name} (local trained verifier)")
+            return ColorOnlyRunner(FILTER_CONFIG, verifier_path)
+        print("Model: not found; using color/shape fallback mode")
+        return ColorOnlyRunner(FILTER_CONFIG)
+
+    print(f"Model: {model_path}")
+    if not os.access(model_path, os.X_OK):
+        raise PermissionError(
+            f"{model_path.name} is not executable. "
+            f"Run: chmod +x {model_path.name}"
+        )
+    if ImageImpulseRunner is None:
+        raise RuntimeError(
+            "edge_impulse_linux is required when a .eim model is present"
+        )
+    return ImageImpulseRunner(str(model_path))
+
+
 def get_position(center_x, image_width):
     left_boundary = image_width / 3
     right_boundary = image_width * 2 / 3
@@ -324,6 +348,7 @@ def process_bounding_boxes(
     model_width,
     model_height,
     target_confirmation,
+    log_events=True,
 ):
     boxes = result["result"].get(
         "bounding_boxes",
@@ -396,6 +421,14 @@ def process_bounding_boxes(
         preview_rgb,
         FILTER_CONFIG,
     )
+    observation = {
+        "detected": False,
+        "confidence": 0.0,
+        "ball_x": None,
+        "ball_y": None,
+        "ball_width": None,
+        "ball_height": None,
+    }
 
     if target_item is not None:
         target, metrics = target_item
@@ -440,6 +473,16 @@ def process_bounding_boxes(
         area_ratio = metrics.object_area_ratio
 
         if confirmed:
+            observation = {
+                "detected": True,
+                "confidence": float(target["value"]),
+                "ball_x": center_x / model_width,
+                "ball_y": center_y / model_height,
+                "ball_width": float(target["width"]) / model_width,
+                "ball_height": float(target["height"]) / model_height,
+            }
+
+        if confirmed:
             target_text = (
                 f"TARGET: {detected_position} "
                 f"{float(target['value']):.2f} "
@@ -452,17 +495,18 @@ def process_bounding_boxes(
                 f"{target_confirmation.required_frames}"
             )
 
-        print(
-            f"BALL {'CONFIRMED' if confirmed else 'VERIFYING'} "
-            f"confidence={float(target['value']):.3f} "
-            f"x={center_x:.1f} "
-            f"y={center_y:.1f} "
-            f"area={area_ratio:.4f} "
-            f"color={metrics.color_ratio:.3f} "
-            f"round={metrics.circularity:.3f} "
-            f"object_area={metrics.object_area_ratio:.3f} "
-            f"position={detected_position}"
-        )
+        if log_events:
+            print(
+                f"BALL {'CONFIRMED' if confirmed else 'VERIFYING'} "
+                f"confidence={float(target['value']):.3f} "
+                f"x={center_x:.1f} "
+                f"y={center_y:.1f} "
+                f"area={area_ratio:.4f} "
+                f"color={metrics.color_ratio:.3f} "
+                f"round={metrics.circularity:.3f} "
+                f"object_area={metrics.object_area_ratio:.3f} "
+                f"position={detected_position}"
+            )
 
     else:
         target_confirmation.reset()
@@ -480,28 +524,31 @@ def process_bounding_boxes(
                 f"color={frame_color_coverage:.2f}"
             )
             area_ratio = 1.0
-            print(
-                "BALL TOO CLOSE "
-                f"frame_color={frame_color_coverage:.3f}"
-            )
+            if log_events:
+                print(
+                    "BALL TOO CLOSE "
+                    f"frame_color={frame_color_coverage:.3f}"
+                )
         elif rejected:
             target_text = "TARGET: REJECTED"
             rejected_box, rejected_metrics = rejected[0]
             reasons = ",".join(rejected_metrics.reasons)
-            print(
-                "BALL REJECTED "
-                f"confidence={float(rejected_box['value']):.3f} "
-                f"color={rejected_metrics.color_ratio:.3f} "
-                f"round={rejected_metrics.circularity:.3f} "
-                f"extent={rejected_metrics.extent:.3f} "
-                f"solidity={rejected_metrics.solidity:.3f} "
-                f"aspect={rejected_metrics.aspect:.3f} "
-                f"object_area={rejected_metrics.object_area_ratio:.3f} "
-                f"reasons={reasons}"
-            )
+            if log_events:
+                print(
+                    "BALL REJECTED "
+                    f"confidence={float(rejected_box['value']):.3f} "
+                    f"color={rejected_metrics.color_ratio:.3f} "
+                    f"round={rejected_metrics.circularity:.3f} "
+                    f"extent={rejected_metrics.extent:.3f} "
+                    f"solidity={rejected_metrics.solidity:.3f} "
+                    f"aspect={rejected_metrics.aspect:.3f} "
+                    f"object_area={rejected_metrics.object_area_ratio:.3f} "
+                    f"reasons={reasons}"
+                )
         else:
             target_text = "TARGET: LOST"
-            print("BALL LOST")
+            if log_events:
+                print("BALL LOST")
 
     cv2.putText(
         display,
@@ -523,7 +570,7 @@ def process_bounding_boxes(
         2
     )
 
-    return display, position, area_ratio, target_x
+    return display, position, area_ratio, target_x, observation
 
 
 def process_classification(
@@ -626,31 +673,7 @@ def main():
     project_folder = Path(
         __file__
     ).resolve().parent
-
-    model_path = find_model_file(
-        project_folder
-    )
-
-    if model_path is None:
-        verifier_path = project_folder / "tennis_ball_verifier.npz"
-        if verifier_path.exists():
-            print(f"Model: {verifier_path.name} (local trained verifier)")
-            runner_context = ColorOnlyRunner(FILTER_CONFIG, verifier_path)
-        else:
-            print("Model: not found; using color/shape fallback mode")
-            runner_context = ColorOnlyRunner(FILTER_CONFIG)
-    else:
-        print(f"Model: {model_path}")
-        if not os.access(model_path, os.X_OK):
-            raise PermissionError(
-                f"{model_path.name} is not executable. "
-                f"Run: chmod +x {model_path.name}"
-            )
-        if ImageImpulseRunner is None:
-            raise RuntimeError(
-                "edge_impulse_linux is required when a .eim model is present"
-            )
-        runner_context = ImageImpulseRunner(str(model_path))
+    runner_context = build_runner_context(project_folder)
 
     camera = Picamera2()
     motor_controller = None
@@ -762,7 +785,7 @@ def main():
                 )
 
                 if "bounding_boxes" in result_data:
-                    display, position, area_ratio, target_x = (
+                    display, position, area_ratio, target_x, _ = (
                         process_bounding_boxes(
                             result,
                             preview_rgb,

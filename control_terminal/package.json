@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node tools/serve.mjs",
-    "check": "node --check src/app.js && node --check src/protocol.js && node --check src/state.js && node --check src/transport.js && node --check src/video.js && node --check service-worker.js && node --check tools/serve.mjs && node --check tools/gateway-smoke.mjs",
+    "check": "node --check src/app.js && node --check src/protocol.js && node --check src/state.js && node --check src/transport.js && node --check src/video.js && node --check service-worker.js && node --check tools/serve.mjs && node --check tools/gateway-smoke.mjs && node --check tools/gateway-video-smoke.mjs",
     "test": "node --test",
-    "test:gateway": "node tools/gateway-smoke.mjs"
+    "test:gateway": "node tools/gateway-smoke.mjs",
+    "test:video": "node tools/gateway-video-smoke.mjs"
   }
 }
