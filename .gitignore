@@ -6,6 +6,9 @@ node_modules/
 dist/
 build/
 
+*_candidate.npz
+*_candidate_report.json
+
 tmp/
 training_data/
 ssh_*.py

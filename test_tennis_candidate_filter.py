@@ -79,6 +79,23 @@ class CandidateFilterTests(unittest.TestCase):
         boxes = find_color_candidate_boxes(image, CONFIG, 1000)
         self.assertEqual(boxes, [])
 
+    def test_color_candidate_keeps_its_concave_source_contour(self) -> None:
+        image = np.zeros((200, 200, 3), dtype=np.uint8)
+        color = (210, 255, 40)
+        cv2.rectangle(image, (40, 40), (160, 160), color, -1)
+        cv2.rectangle(image, (60, 40), (140, 140), (0, 0, 0), -1)
+        cv2.circle(image, (100, 100), 5, color, -1)
+
+        boxes = find_color_candidate_boxes(image, CONFIG, 1000)
+        largest = max(
+            boxes,
+            key=lambda box: float(box["width"]) * float(box["height"]),
+        )
+        metrics = evaluate_candidate(image, largest, 1000, 1000, CONFIG)
+
+        self.assertGreater(metrics.object_area_ratio, 0.05)
+        self.assertNotIn("too_small", metrics.reasons)
+
     def test_bright_yellow_square_is_rejected(self) -> None:
         image = np.zeros((200, 200, 3), dtype=np.uint8)
         cv2.rectangle(image, (40, 40), (159, 159), (210, 255, 40), -1)
@@ -136,6 +153,94 @@ class CandidateFilterTests(unittest.TestCase):
 
         self.assertFalse(metrics.accepted, metrics)
         self.assertIn("not_round", metrics.reasons)
+
+    def test_high_confidence_trained_candidate_accepts_dark_fragment(self) -> None:
+        image = np.zeros((200, 200, 3), dtype=np.uint8)
+        color = (210, 255, 40)
+        cv2.rectangle(image, (50, 65), (150, 135), color, -1)
+        for index, x in enumerate(range(55, 146, 12)):
+            if index % 2 == 0:
+                cv2.rectangle(image, (x, 65), (x + 8, 86), (0, 0, 0), -1)
+            else:
+                cv2.rectangle(image, (x, 114), (x + 8, 135), (0, 0, 0), -1)
+
+        ordinary = evaluate_candidate(image, DETECTION, 100, 100, CONFIG)
+        trained = evaluate_candidate(
+            image,
+            {**DETECTION, "trained_verifier": True},
+            100,
+            100,
+            CONFIG,
+        )
+
+        self.assertLess(ordinary.circularity, CONFIG.circularity_min)
+        self.assertFalse(ordinary.accepted, ordinary)
+        self.assertIn("not_round", ordinary.reasons)
+        self.assertTrue(trained.accepted, trained)
+
+    def test_high_confidence_trained_candidate_relaxes_partial_fill(self) -> None:
+        image = np.zeros((200, 200, 3), dtype=np.uint8)
+        color = (210, 255, 40)
+        cv2.ellipse(image, (100, 100), (55, 10), 45, 0, 360, color, -1)
+        largest = max(
+            find_color_candidate_boxes(image, CONFIG, 1000),
+            key=lambda box: float(box["width"]) * float(box["height"]),
+        )
+        ordinary = evaluate_candidate(image, largest, 1000, 1000, CONFIG)
+        trained = evaluate_candidate(
+            image,
+            {**largest, "value": 0.98, "trained_verifier": True},
+            1000,
+            1000,
+            CONFIG,
+        )
+
+        self.assertFalse(ordinary.accepted, ordinary)
+        self.assertIn("shape_fill", ordinary.reasons)
+        self.assertTrue(trained.accepted, trained)
+
+    def test_high_confidence_trained_candidate_relaxes_partial_solidity(self) -> None:
+        image = np.zeros((200, 200, 3), dtype=np.uint8)
+        color = (210, 255, 40)
+        cv2.rectangle(image, (50, 50), (150, 150), color, -1)
+        cv2.rectangle(image, (70, 50), (130, 125), (0, 0, 0), -1)
+        largest = max(
+            find_color_candidate_boxes(image, CONFIG, 1000),
+            key=lambda box: float(box["width"]) * float(box["height"]),
+        )
+        ordinary = evaluate_candidate(image, largest, 1000, 1000, CONFIG)
+        trained = evaluate_candidate(
+            image,
+            {**largest, "value": 0.98, "trained_verifier": True},
+            1000,
+            1000,
+            CONFIG,
+        )
+
+        self.assertFalse(ordinary.accepted, ordinary)
+        self.assertIn("irregular_shape", ordinary.reasons)
+        self.assertTrue(trained.accepted, trained)
+
+    def test_high_confidence_trained_candidate_relaxes_dark_aspect(self) -> None:
+        image = np.zeros((200, 200, 3), dtype=np.uint8)
+        color = (210, 255, 40)
+        cv2.ellipse(image, (100, 100), (52, 23), 0, 0, 360, color, -1)
+        largest = max(
+            find_color_candidate_boxes(image, CONFIG, 1000),
+            key=lambda box: float(box["width"]) * float(box["height"]),
+        )
+        ordinary = evaluate_candidate(image, largest, 1000, 1000, CONFIG)
+        trained = evaluate_candidate(
+            image,
+            {**largest, "value": 0.98, "trained_verifier": True},
+            1000,
+            1000,
+            CONFIG,
+        )
+
+        self.assertFalse(ordinary.accepted, ordinary)
+        self.assertIn("shape_aspect", ordinary.reasons)
+        self.assertTrue(trained.accepted, trained)
 
     def test_target_requires_three_consistent_frames(self) -> None:
         tracker = TargetConfirmation(required_frames=3, max_jump=0.20)

@@ -30,11 +30,15 @@ class CandidateFilterConfig:
     color_ratio_min: float = 0.08
     circularity_min: float = 0.42
     trained_confidence_relax: float = 0.90
-    trained_circularity_min: float = 0.16
+    trained_circularity_min: float = 0.0
     extent_min: float = 0.30
     extent_max: float = 0.92
+    trained_extent_min: float = 0.25
+    trained_extent_max: float = 0.98
     solidity_min: float = 0.72
+    trained_solidity_min: float = 0.45
     aspect_max: float = 1.85
+    trained_aspect_max: float = 2.50
     object_area_min: float = 0.0005
     crop_expansion: float = 2.50
     close_color_coverage: float = 0.60
@@ -66,12 +70,28 @@ class CandidateFilterConfig:
             ),
             trained_circularity_min=_env_float(
                 "TENNIS_TRAINED_CIRCULARITY_MIN",
-                0.16,
+                0.0,
             ),
             extent_min=_env_float("TENNIS_EXTENT_MIN", 0.30),
             extent_max=_env_float("TENNIS_EXTENT_MAX", 0.92),
+            trained_extent_min=_env_float(
+                "TENNIS_TRAINED_EXTENT_MIN",
+                0.25,
+            ),
+            trained_extent_max=_env_float(
+                "TENNIS_TRAINED_EXTENT_MAX",
+                0.98,
+            ),
             solidity_min=_env_float("TENNIS_SOLIDITY_MIN", 0.72),
+            trained_solidity_min=_env_float(
+                "TENNIS_TRAINED_SOLIDITY_MIN",
+                0.45,
+            ),
             aspect_max=_env_float("TENNIS_ASPECT_MAX", 1.85),
+            trained_aspect_max=_env_float(
+                "TENNIS_TRAINED_ASPECT_MAX",
+                2.50,
+            ),
             object_area_min=_env_float(
                 "TENNIS_OBJECT_AREA_MIN",
                 0.0005,
@@ -111,10 +131,26 @@ class CandidateFilterConfig:
             )
         if not 0 <= self.extent_min < self.extent_max <= 1:
             raise ValueError("extent range must be within [0, 1]")
+        if not 0 <= self.trained_extent_min <= self.extent_min:
+            raise ValueError(
+                "trained_extent_min must be between 0 and extent_min"
+            )
+        if not self.extent_max <= self.trained_extent_max <= 1:
+            raise ValueError(
+                "trained_extent_max must be between extent_max and 1"
+            )
         if not 0 <= self.solidity_min <= 1:
             raise ValueError("solidity_min must be between 0 and 1")
+        if not 0 <= self.trained_solidity_min <= self.solidity_min:
+            raise ValueError(
+                "trained_solidity_min must be between 0 and solidity_min"
+            )
         if self.aspect_max < 1:
             raise ValueError("aspect_max must be at least 1")
+        if self.trained_aspect_max < self.aspect_max:
+            raise ValueError(
+                "trained_aspect_max must be at least aspect_max"
+            )
         if not 0 <= self.object_area_min < 1:
             raise ValueError("object_area_min must be within [0, 1)")
         if self.crop_expansion < 1:
@@ -220,6 +256,7 @@ def find_color_candidate_boxes(
                 "y": y * coordinate_size / image_height,
                 "width": width * coordinate_size / image_width,
                 "height": height * coordinate_size / image_height,
+                "color_candidate": True,
             }
         )
     return boxes
@@ -259,20 +296,48 @@ def evaluate_candidate(
     if not contours:
         return _rejected("tennis_color")
 
-    containing = [
-        contour
-        for contour in contours
-        if cv2.pointPolygonTest(
-            contour,
-            (float(candidate_x), float(candidate_y)),
-            False,
-        )
-        >= 0
-    ]
+    contour: np.ndarray | None = None
+    if bool(detection.get("color_candidate")):
+        expected_x = box_x * image_width / model_width
+        expected_y = box_y * image_height / model_height
+        expected_width = box_width * image_width / model_width
+        expected_height = box_height * image_height / model_height
+        ranked = []
+        for possible_contour in contours:
+            rect_x, rect_y, rect_width, rect_height = cv2.boundingRect(
+                possible_contour
+            )
+            boundary_error = (
+                abs(rect_x - expected_x)
+                + abs(rect_y - expected_y)
+                + abs(rect_width - expected_width)
+                + abs(rect_height - expected_height)
+            )
+            ranked.append((boundary_error, possible_contour))
+        if ranked:
+            boundary_error, possible_contour = min(
+                ranked,
+                key=lambda item: item[0],
+            )
+            if boundary_error <= 4.0:
+                contour = possible_contour
 
-    if containing:
-        contour = max(containing, key=cv2.contourArea)
-    else:
+    if contour is None:
+        containing = [
+            possible_contour
+            for possible_contour in contours
+            if cv2.pointPolygonTest(
+                possible_contour,
+                (float(candidate_x), float(candidate_y)),
+                False,
+            )
+            >= 0
+        ]
+
+        if containing:
+            contour = max(containing, key=cv2.contourArea)
+
+    if contour is None:
         maximum_distance = max(
             box_width * image_width / model_width,
             box_height * image_height / model_height,
@@ -336,19 +401,28 @@ def evaluate_candidate(
         reasons.append("tennis_color")
     if object_area_ratio < config.object_area_min:
         reasons.append("too_small")
-    circularity_threshold = config.circularity_min
-    if (
+    trained_shape_relax = (
         bool(detection.get("trained_verifier"))
         and confidence >= config.trained_confidence_relax
-    ):
+    )
+    circularity_threshold = config.circularity_min
+    extent_min = config.extent_min
+    extent_max = config.extent_max
+    solidity_min = config.solidity_min
+    aspect_max = config.aspect_max
+    if trained_shape_relax:
         circularity_threshold = config.trained_circularity_min
+        extent_min = config.trained_extent_min
+        extent_max = config.trained_extent_max
+        solidity_min = config.trained_solidity_min
+        aspect_max = config.trained_aspect_max
     if circularity < circularity_threshold and object_area_ratio < 0.15:
         reasons.append("not_round")
-    if not config.extent_min <= extent <= config.extent_max:
+    if not extent_min <= extent <= extent_max:
         reasons.append("shape_fill")
-    if solidity < config.solidity_min:
+    if solidity < solidity_min:
         reasons.append("irregular_shape")
-    if contour_aspect > config.aspect_max:
+    if contour_aspect > aspect_max:
         reasons.append("shape_aspect")
 
     return CandidateMetrics(

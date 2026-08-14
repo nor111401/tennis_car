@@ -2,23 +2,23 @@
   "model": "tennis_ball_verifier.npz",
   "selected_C": 0.003,
   "feature_count": 3092,
-  "train_sample_count": 7345,
-  "validation_sample_count": 1187,
+  "train_sample_count": 9170,
+  "validation_sample_count": 1451,
   "train_class_count": {
-    "negative": 4639,
-    "positive": 2706
+    "negative": 5672,
+    "positive": 3498
   },
   "validation_class_count": {
-    "negative": 1035,
-    "positive": 152
+    "negative": 1255,
+    "positive": 196
   },
   "train_frame_counts": {
     "positive": {
-      "frames": 451,
-      "positive_patches": 2706,
-      "proposal_negatives": 505,
-      "vivid_negatives": 902,
-      "random_negatives": 1353,
+      "frames": 583,
+      "positive_patches": 3498,
+      "proposal_negatives": 878,
+      "vivid_negatives": 1166,
+      "random_negatives": 1749,
       "missing_positive": 0
     },
     "negative": {
@@ -32,11 +32,11 @@
   },
   "validation_frame_counts": {
     "positive": {
-      "frames": 152,
-      "positive_patches": 152,
-      "proposal_negatives": 158,
-      "vivid_negatives": 152,
-      "random_negatives": 304,
+      "frames": 196,
+      "positive_patches": 196,
+      "proposal_negatives": 246,
+      "vivid_negatives": 196,
+      "random_negatives": 392,
       "missing_positive": 0
     },
     "negative": {
@@ -52,12 +52,12 @@
     "threshold": 0.7,
     "confusion_matrix": [
       [
-        4639,
+        5672,
         0
       ],
       [
         0,
-        2706
+        3498
       ]
     ],
     "accuracy": 1.0,
@@ -67,26 +67,26 @@
     "false_positive_rate": 0.0,
     "roc_auc": 1.0,
     "positive_probability": {
-      "minimum": 0.9903503230054063,
-      "median": 0.9999371928445033,
-      "maximum": 0.9999981763418615
+      "minimum": 0.9087757320441708,
+      "median": 0.9998738236814898,
+      "maximum": 0.9999995347611321
     },
     "negative_probability": {
-      "minimum": 3.9985956300695205e-05,
-      "median": 0.00391220127655283,
-      "maximum": 0.13408152765188022
+      "minimum": 2.215968523845933e-06,
+      "median": 0.003616294338432909,
+      "maximum": 0.2662428937002965
     }
   },
   "validation_metrics": {
     "threshold": 0.7,
     "confusion_matrix": [
       [
-        1035,
+        1255,
         0
       ],
       [
         0,
-        152
+        196
       ]
     ],
     "accuracy": 1.0,
@@ -96,14 +96,14 @@
     "false_positive_rate": 0.0,
     "roc_auc": 1.0,
     "positive_probability": {
-      "minimum": 0.8901196058402125,
-      "median": 0.9999457988765705,
-      "maximum": 0.9999912577794376
+      "minimum": 0.9136897561371382,
+      "median": 0.9998197758221851,
+      "maximum": 0.9999975925958369
     },
     "negative_probability": {
-      "minimum": 8.491528665496688e-05,
-      "median": 0.004030995960920925,
-      "maximum": 0.24861202123188603
+      "minimum": 2.4251945501425904e-05,
+      "median": 0.0039519753407665165,
+      "maximum": 0.26273775885826733
     }
   },
   "trials": [
@@ -113,12 +113,12 @@
       "threshold": 0.7,
       "confusion_matrix": [
         [
-          1035,
+          1255,
           0
         ],
         [
           0,
-          152
+          196
         ]
       ],
       "accuracy": 1.0,
@@ -128,14 +128,14 @@
       "false_positive_rate": 0.0,
       "roc_auc": 1.0,
       "positive_probability": {
-        "minimum": 0.8901196058402125,
-        "median": 0.9999457988765705,
-        "maximum": 0.9999912577794376
+        "minimum": 0.9136897561371382,
+        "median": 0.9998197758221851,
+        "maximum": 0.9999975925958369
       },
       "negative_probability": {
-        "minimum": 8.491528665496688e-05,
-        "median": 0.004030995960920925,
-        "maximum": 0.24861202123188603
+        "minimum": 2.4251945501425904e-05,
+        "median": 0.0039519753407665165,
+        "maximum": 0.26273775885826733
       }
     },
     {
@@ -144,12 +144,12 @@
       "threshold": 0.7,
       "confusion_matrix": [
         [
-          1035,
+          1255,
           0
         ],
         [
           0,
-          152
+          196
         ]
       ],
       "accuracy": 1.0,
@@ -159,14 +159,14 @@
       "false_positive_rate": 0.0,
       "roc_auc": 1.0,
       "positive_probability": {
-        "minimum": 0.9176219037581034,
-        "median": 0.9999922654847255,
-        "maximum": 0.9999992629764874
+        "minimum": 0.9430758650527572,
+        "median": 0.9999627851682572,
+        "maximum": 0.9999998680986381
       },
       "negative_probability": {
-        "minimum": 1.1961137450116521e-05,
-        "median": 0.001359520614012438,
-        "maximum": 0.19258264860112143
+        "minimum": 2.6092858560356682e-06,
+        "median": 0.0013142467395973766,
+        "maximum": 0.2118181406123453
       }
     },
     {
@@ -175,12 +175,12 @@
       "threshold": 0.7,
       "confusion_matrix": [
         [
-          1035,
+          1255,
           0
         ],
         [
           0,
-          152
+          196
         ]
       ],
       "accuracy": 1.0,
@@ -190,14 +190,14 @@
       "false_positive_rate": 0.0,
       "roc_auc": 1.0,
       "positive_probability": {
-        "minimum": 0.9387371992924592,
-        "median": 0.9999988176269553,
-        "maximum": 0.9999999212127948
+        "minimum": 0.9630327792423304,
+        "median": 0.9999921279739961,
+        "maximum": 0.9999999914430576
       },
       "negative_probability": {
-        "minimum": 1.7151032389675418e-06,
-        "median": 0.0004945946783127229,
-        "maximum": 0.14959396167201386
+        "minimum": 3.243825971405005e-07,
+        "median": 0.0004792359992210232,
+        "maximum": 0.17186413236947592
       }
     },
     {
@@ -206,12 +206,12 @@
       "threshold": 0.7,
       "confusion_matrix": [
         [
-          1035,
+          1255,
           0
         ],
         [
           0,
-          152
+          196
         ]
       ],
       "accuracy": 1.0,
@@ -221,14 +221,14 @@
       "false_positive_rate": 0.0,
       "roc_auc": 1.0,
       "positive_probability": {
-        "minimum": 0.9557650066613431,
-        "median": 0.9999998536866026,
-        "maximum": 0.9999999944037679
+        "minimum": 0.9772471298820846,
+        "median": 0.9999986326797694,
+        "maximum": 0.9999999996247542
       },
       "negative_probability": {
-        "minimum": 1.8461831969922648e-07,
-        "median": 0.0001597963220343562,
-        "maximum": 0.11109932873344334
+        "minimum": 2.7625387622195812e-08,
+        "median": 0.00014236028618495875,
+        "maximum": 0.1327648048821258
       }
     }
   ]
