@@ -1,0 +1,20 @@
+{
+  "name": "Tennis Rover Control Console",
+  "short_name": "Tennis Rover",
+  "description": "网球小车实时观察、模式切换与人工控制终端",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#080d12",
+  "theme_color": "#0b1118",
+  "icons": [
+    {
+      "src": "./icons/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

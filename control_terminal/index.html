@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1118">
+  <meta name="description" content="网球小车低延迟观察与控制终端">
+  <title>Tennis Rover Console</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/app-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">●</span>
+      <div>
+        <strong>Tennis Rover</strong>
+        <span>控制终端</span>
+      </div>
+    </div>
+
+    <div class="connection-bar">
+      <label class="endpoint-field">
+        <span>树莓派地址</span>
+        <input id="endpoint" value="ws://192.168.0.108:8765/ws" spellcheck="false">
+      </label>
+      <label class="token-field">
+        <span>访问令牌</span>
+        <input id="token" type="password" placeholder="未配置">
+      </label>
+      <button id="connect-button" class="button button-primary">连接小车</button>
+      <button id="demo-button" class="button button-quiet">演示模式</button>
+    </div>
+
+    <div id="connection-pill" class="status-pill offline">
+      <span class="status-dot"></span>
+      <span id="connection-text">未连接</span>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <section class="video-card card">
+      <div class="card-heading">
+        <div>
+          <span class="eyebrow">CAMERA 01</span>
+          <h1>实时视野</h1>
+        </div>
+        <div class="live-indicator"><span></span><b id="video-status">等待视频</b></div>
+      </div>
+
+      <div id="video-stage" class="video-stage">
+        <video id="robot-video" autoplay muted playsinline></video>
+        <div id="video-placeholder" class="video-placeholder">
+          <div class="radar-grid"></div>
+          <div class="horizon-line"></div>
+          <p>连接树莓派后显示低延迟画面</p>
+          <small>也可以进入演示模式预览终端交互</small>
+        </div>
+        <div class="camera-reticle" aria-hidden="true"></div>
+        <div id="target-box" class="target-box" hidden>
+          <span id="target-label">TENNIS 0%</span>
+        </div>
+        <div class="video-badges">
+          <span id="fps-badge">0.0 FPS</span>
+          <span id="latency-badge">-- ms</span>
+          <span id="mode-badge">AUTO</span>
+        </div>
+      </div>
+
+      <div class="telemetry-strip">
+        <div><span>目标</span><strong id="ball-state">未发现</strong></div>
+        <div><span>置信度</span><strong id="confidence-state">0%</strong></div>
+        <div><span>识别耗时</span><strong id="inference-state">0 ms</strong></div>
+        <div><span>搜索阶段</span><strong id="search-state">IDLE</strong></div>
+      </div>
+    </section>
+
+    <aside class="control-column">
+      <section class="card mode-card">
+        <div class="section-title">
+          <div><span class="eyebrow">OPERATION</span><h2>工作模式</h2></div>
+          <span id="controller-state" class="small-state">无人接管</span>
+        </div>
+
+        <div class="mode-switch" role="group" aria-label="工作模式">
+          <button class="mode-button active" data-mode="AUTO"><span>A</span>自动追球</button>
+          <button class="mode-button" data-mode="MANUAL"><span>M</span>手动控制</button>
+          <button class="mode-button" data-mode="PAUSED"><span>P</span>暂停观察</button>
+        </div>
+
+        <div class="lease-row">
+          <div>
+            <strong id="lease-title">只读观察</strong>
+            <span id="lease-detail">申请控制权后才能切换模式</span>
+          </div>
+          <button id="lease-button" class="button button-outline">申请接管</button>
+        </div>
+      </section>
+
+      <section class="card manual-card">
+        <div class="section-title">
+          <div><span class="eyebrow">MANUAL DRIVE</span><h2>人工驾驶</h2></div>
+          <span id="motion-state" class="motion-state">STOP</span>
+        </div>
+
+        <div id="manual-lock" class="manual-lock">切换到手动模式后启用</div>
+
+        <div class="drive-panel">
+          <div class="dpad" aria-label="方向控制">
+            <button class="drive-button forward" data-motion="FORWARD" aria-label="前进"><span>▲</span><small>W</small></button>
+            <button class="drive-button left" data-motion="TURN_LEFT" aria-label="左转"><span>◀</span><small>A</small></button>
+            <button class="drive-button stop" data-motion="STOP" aria-label="停车"><span>■</span><small>STOP</small></button>
+            <button class="drive-button right" data-motion="TURN_RIGHT" aria-label="右转"><span>▶</span><small>D</small></button>
+            <button class="drive-button reverse" data-motion="REVERSE" aria-label="后退"><span>▼</span><small>S</small></button>
+          </div>
+
+          <label class="speed-control">
+            <div><span>手动速度</span><strong id="speed-value">60%</strong></div>
+            <input id="speed-slider" type="range" min="20" max="100" step="5" value="60">
+          </label>
+        </div>
+
+        <p class="control-hint">按住方向才移动，松开立即停车。支持 W/A/S/D，空格键紧急停车。</p>
+      </section>
+
+      <button id="estop-button" class="estop-button">
+        <span class="estop-icon">!</span>
+        <span><strong>紧急停车</strong><small>立即中断所有运动输出</small></span>
+      </button>
+    </aside>
+
+    <section class="status-grid">
+      <article class="card status-card">
+        <span class="eyebrow">VEHICLE</span>
+        <h3>车辆状态</h3>
+        <dl>
+          <div><dt>当前动作</dt><dd id="vehicle-motion">STOP</dd></div>
+          <div><dt>电机控制</dt><dd id="motor-state" class="bad">离线</dd></div>
+          <div><dt>串口通信</dt><dd id="uart-state" class="bad">离线</dd></div>
+        </dl>
+      </article>
+
+      <article class="card status-card">
+        <span class="eyebrow">VISION</span>
+        <h3>视觉识别</h3>
+        <dl>
+          <div><dt>目标状态</dt><dd id="vision-target">未发现</dd></div>
+          <div><dt>画面帧率</dt><dd id="vision-fps">0.0 FPS</dd></div>
+          <div><dt>识别置信度</dt><dd id="vision-confidence">0%</dd></div>
+        </dl>
+      </article>
+
+      <article class="card event-card">
+        <div class="event-title"><div><span class="eyebrow">EVENTS</span><h3>运行记录</h3></div><button id="clear-log" class="text-button">清空</button></div>
+        <ol id="event-log" class="event-log" aria-live="polite"></ol>
+      </article>
+    </section>
+  </main>
+
+  <script type="module" src="./src/app.js"></script>
+</body>
+</html>
