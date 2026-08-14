@@ -279,11 +279,11 @@ class GatewayCoreTests(unittest.TestCase):
 
 
 class RuntimeSettingsTests(unittest.TestCase):
-    def test_environment_defaults_to_paused_boot_mode(self) -> None:
+    def test_environment_defaults_to_auto_boot_mode(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             settings = RuntimeSettings.from_environment()
 
-        self.assertEqual(settings.boot_mode, GatewayMode.PAUSED)
+        self.assertEqual(settings.boot_mode, GatewayMode.AUTO)
 
     def test_manual_boot_mode_is_rejected(self) -> None:
         with patch.dict(

@@ -24,13 +24,13 @@ class RuntimeSettings:
     video_fps: float = 15.0
     jpeg_quality: int = 78
     motor_output_enabled: bool = False
-    boot_mode: GatewayMode = GatewayMode.PAUSED
+    boot_mode: GatewayMode = GatewayMode.AUTO
 
     @classmethod
     def from_environment(cls) -> "RuntimeSettings":
         boot_mode_value = os.environ.get(
             "TENNIS_GATEWAY_BOOT_MODE",
-            GatewayMode.PAUSED.value,
+            GatewayMode.AUTO.value,
         ).strip().upper()
         try:
             boot_mode = GatewayMode(boot_mode_value)

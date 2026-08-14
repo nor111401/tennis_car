@@ -36,9 +36,9 @@ npm start
 树莓派认证网关可以建立真实控制、状态和视频通道。摄像头、现有网球识别模型、目标遥测
 和 JPEG 实时画面均已接入；视频使用单槽最新帧缓冲，网络或解码较慢时不会堆积旧画面。
 
-`MotorController` 已处于统一模式仲裁之后，但当前部署仍设置 `TENNIS_MOTOR_ENABLE=0`。
-终端可以验证 AUTO/MANUAL/PAUSED 和方向状态，不会实际驱动车辆。后退命令仍会得到
-`REVERSE_NOT_IMPLEMENTED`。
+`MotorController` 已处于统一模式仲裁之后，当前树莓派部署设置 `TENNIS_MOTOR_ENABLE=1`。
+取得控制权并进入 MANUAL 后，方向按键会实际驱动车辆；树莓派重启后从 `AUTO` 开始追球。
+后退命令尚未实现，仍会得到 `REVERSE_NOT_IMPLEMENTED`。
 
 默认地址暂填 `ws://192.168.0.108:8765/ws`。IP 是 DHCP 地址，部署时应改为可发现的
 设备地址或由终端扫描，不应该在正式发行版中依赖固定 IP。

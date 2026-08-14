@@ -19,7 +19,7 @@ Repository：`D:\liugensheng\tennis`，Git 分支 `main`，尚未配置远程仓
 - 目标连续帧确认、位置判断、接近停车和丢球分阶段搜索。
 - 通过 `/dev/serial0` 控制四路电机。
 - Windows/安卓共享 PWA 控制终端第一版及通信协议设计。
-- 树莓派认证网关已统一接入摄像头、识别遥测、低延迟 JPEG 视频和电机仲裁；真实电机仍关闭。
+- 树莓派认证网关已统一接入摄像头、识别遥测、低延迟 JPEG 视频和电机仲裁；当前部署已按用户授权打开真实电机输出。
 - 独立二维车辆仿真项目。
 
 ## 2. 已知硬件与系统
@@ -189,8 +189,9 @@ JPEG 帧；慢终端自动丢弃旧帧。识别框已经绘制到当前视频帧
 
 `MotorController` 已接入同一仲裁层：AUTO 使用识别观察，MANUAL 使用终端方向和速度，
 PAUSED/MANUAL_LOST/EMERGENCY_STOP 强制 STOP。当前 systemd 明确设置
-`TENNIS_GATEWAY_BOOT_MODE=PAUSED` 和 `TENNIS_MOTOR_ENABLE=0`，所以重启后不会自动运动，
-且 `gatewayDryRun=true`、`motorOutputEnabled=false`，不会打开 UART。
+`TENNIS_GATEWAY_BOOT_MODE=AUTO` 和 `TENNIS_MOTOR_ENABLE=1`。重启后直接根据识别结果
+自动追球，UART 同时打开；终端取得控制权后可切换 MANUAL 或 PAUSED。用户以电机物理
+总电源开关作为现场启停手段。
 
 未实现：WebRTC/H.264、REVERSE、设备发现，以及真实电机的车轮悬空验证。
 
@@ -202,8 +203,8 @@ PAUSED/MANUAL_LOST/EMERGENCY_STOP 强制 STOP。当前 systemd 明确设置
 4. 手动模式超过600ms没有服务端认可的心跳必须停车并进入MANUAL_LOST。
 5. 手动断线后不得自动恢复AUTO，必须人工确认。
 6. 急停状态在服务端锁存，优先于全部自动和手动指令。
-7. 电机输出默认关闭；任何真实测试前先进行摄像头、识别和内存传输测试。
-8. 真实模式切换先车轮悬空测试，再落地低速测试。
+7. 代码层电机输出默认关闭；当前 systemd 部署仅因用户明确授权而设置为开启。
+8. 当前现场操作按用户方案由电机物理总电源开关控制启停，用户选择跳过车轮悬空测试。
 
 ## 11. 测试和部署
 
@@ -229,13 +230,16 @@ PWA清单本地HTTP烟雾测试通过；Windows Edge 1440×1000无头渲染视�
 认证控制链路通过；认证视频链路收到有效实时JPEG帧，最近抽样帧大小44729字节、识别遥测
 22.2 FPS。候选过滤器
 测试因本机默认Python缺少`cv2`未运行，该限制不是此次终端修改造成的。
+切换为 AUTO 默认启动后，本机上述 Python 测试36/36再次通过，树莓派
+`RuntimeSettingsTests` 2/2通过。
 
 网关部署状态：树莓派 `/home/pi/tennis/.venv-gateway` 已安装 FastAPI、Uvicorn 和 WebSockets；
 `tennis-robot-gateway.service` 已启用并正在运行，开机自动启动。访问令牌仅保存在树莓派
 `/etc/tennis-robot-gateway.env`，权限为 `root:root 600`；无令牌 WebSocket 连接已验证会被拒绝。
-服务监听局域网 TCP 8765；重启后的健康检查已验证 `mode=PAUSED`、`cameraOnline=true`、
-`videoReady=true`、`runtimeError=null`。服务仍是 `gatewayDryRun=true`、
-`motorOutputEnabled=false`，进程文件描述符检查为 `UART_FD_CLOSED`，不驱动电机。
+服务监听局域网 TCP 8765。2026-08-14 用户确认电机具备物理总电源开关并授权跳过悬空
+测试，当前 systemd 模板已切换为 `TENNIS_MOTOR_ENABLE=1` 并以 `AUTO` 启动。重启后实测
+`mode=AUTO`、`motorOutputEnabled=true`、`cameraOnline=true`、`videoReady=true`、
+`runtimeError=null`、`UART_FD_OPEN`、`throttled=0x0`。
 
 树莓派安全干运行：
 
@@ -253,8 +257,8 @@ TENNIS_MOTOR_ENABLE=1 python3 tennis_ball_rpi.py
 
 ## 12. 已知问题与下一步
 
-1. 用户确认车轮悬空后，将环境文件中的 `TENNIS_MOTOR_ENABLE` 临时设为1，验证真实STOP、
-   手动低速方向、心跳失联停车和模式切换；通过后再考虑落地测试。
+1. 用户通过 Windows 终端验证真实手动方向、STOP、心跳失联停车和模式切换；现场启停由
+   电机物理总电源开关控制。
 2. 测量当前 JPEG WebSocket 的端到端延迟和CPU占用；需要更低带宽时升级为WebRTC/H.264。
 3. 为手动控制实现并验证REVERSE；未完成前终端后退必须由服务端拒绝。
 4. 增加命令发送时间过期、串口写故障和进程退出强制停车的硬件边界测试。
@@ -278,6 +282,9 @@ TENNIS_MOTOR_ENABLE=1 python3 tennis_ball_rpi.py
 - 2026-08-14：网关统一接入 Picamera2、现有识别模型、遥测、单槽低缓存 JPEG 视频和
   `MotorController` 仲裁；Windows终端显示真实画面。树莓派健康检查和认证视频/控制链路
   均通过，真实电机保持关闭，等待车轮悬空验证。
+- 2026-08-14：用户说明电机具备物理总电源开关并明确授权跳过悬空测试；systemd 部署切换
+  为 `TENNIS_MOTOR_ENABLE=1` 和 `TENNIS_GATEWAY_BOOT_MODE=AUTO`，启动后直接自动追球，
+  并允许用户从 Windows 终端接管。
 
 ## 14. 每次修改后的更新检查
 
