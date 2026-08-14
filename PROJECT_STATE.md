@@ -54,7 +54,7 @@ Repository：`D:\liugensheng\tennis`，Git 分支 `main`，尚未配置远程仓
 | `control_terminal/` | Windows/安卓共享 PWA 控制终端第一版 |
 | `robot_gateway/` | 树莓派 FastAPI WebSocket 干运行网关、控制租约、模式仲裁和安全看门狗 |
 | `requirements-gateway.txt` | 独立网关 Python 依赖，不修改系统 Python 环境 |
-| `deploy/` | 网关 systemd 服务模板和认证部署说明；安装前必须明确批准局域网常驻监听 |
+| `deploy/` | 已部署的网关 systemd 服务模板和访问令牌说明 |
 | `docs/CONTROL_TERMINAL_ARCHITECTURE.md` | 终端协议、模式仲裁和树莓派网关设计 |
 | `tennis_robot_sim/tennis_robot_sim/` | 独立二维运动与拾球仿真平台 |
 | `configure_rpi_uart.sh` | Raspberry Pi UART 配置脚本 |
@@ -186,7 +186,7 @@ PWM中值1500，合法范围500～2500。当前仅支持：
 握手、控制租约、AUTO/MANUAL/PAUSED、安全心跳、急停锁存和手动方向状态均可工作。
 `gatewayDryRun=true`、`motorOutputEnabled=false`，网关不导入 `MotorController`，不会打开 UART。
 
-未实现：WebRTC 视频、识别主循环遥测桥接、真实电机仲裁、REVERSE、正式认证和设备发现。
+未实现：WebRTC 视频、识别主循环遥测桥接、真实电机仲裁、REVERSE 和设备发现。
 因此终端目前只能真实验证控制通道，尚不能观看摄像头或实际遥控车辆。
 
 ## 10. 必须保持的安全约束
@@ -225,8 +225,9 @@ Windows到树莓派的WebSocket真实链路烟雾测试通过。候选过滤器�
 `cv2`未运行，该限制不是此次终端修改造成的。
 
 网关部署状态：树莓派 `/home/pi/tennis/.venv-gateway` 已安装 FastAPI、Uvicorn 和 WebSockets；
-代码已上传并通过编译与测试。临时普通用户进程在验证后已停止，尚未安装为开机 systemd 服务。
-未认证且监听全部网卡的常驻服务具有局域网暴露风险，必须在用户明确批准并确定认证方案后安装。
+`tennis-robot-gateway.service` 已启用并正在运行，开机自动启动。访问令牌仅保存在树莓派
+`/etc/tennis-robot-gateway.env`，权限为 `root:root 600`；无令牌 WebSocket 连接已验证会被拒绝。
+服务监听局域网 TCP 8765，但仍是 `gatewayDryRun=true`，不打开 UART、不驱动电机。
 
 树莓派安全干运行：
 
@@ -250,7 +251,7 @@ TENNIS_MOTOR_ENABLE=1 python3 tennis_ball_rpi.py
 4. 为手动控制实现并验证REVERSE；未完成前终端后退必须由服务端拒绝。
 5. 增加服务端命令过期、串口故障和真实输出边界测试；序号、600ms看门狗和急停锁存已覆盖。
 6. 对终端进行浏览器视觉检查和Windows安装测试。
-7. 增加设备发现，避免依赖DHCP IP；加入认证，互联网访问只走VPN。
+7. 增加设备发现，避免依赖DHCP IP；访问令牌认证已完成，互联网访问仍只允许走VPN。
 8. 为自动拾球机构扩展对准、拾取、确认和失败恢复状态。
 
 ## 13. 变更记录
@@ -264,6 +265,9 @@ TENNIS_MOTOR_ENABLE=1 python3 tennis_ball_rpi.py
 - 2026-08-14：新增 `robot_gateway/` WebSocket干运行网关、11项安全核心测试、独立依赖和
   systemd模板；部署到树莓派虚拟环境并通过真实Windows到树莓派控制链路测试。真实视频、
   识别和电机未接入，常驻开机服务等待认证与明确授权。
+- 2026-08-14：用户批准带访问令牌的局域网常驻网关；令牌仅保存在树莓派 root 权限环境
+  文件中。systemd 启动前以特权检查令牌文件，网关进程仍以普通 `pi` 用户运行。服务已
+  `enabled + active`；真实验证无令牌连接被拒绝、带令牌的完整干运行控制链路通过。
 
 ## 14. 每次修改后的更新检查
 

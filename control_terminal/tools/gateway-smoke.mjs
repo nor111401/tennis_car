@@ -3,6 +3,7 @@ import { MessageFactory } from "../src/protocol.js";
 const gatewayUrl = process.argv[2]
   || process.env.TENNIS_GATEWAY_URL
   || "ws://127.0.0.1:8765/ws";
+const gatewayToken = process.env.TENNIS_GATEWAY_TOKEN || "";
 const terminalId = `gateway-smoke-${Date.now()}`;
 const factory = new MessageFactory(terminalId);
 const socket = new WebSocket(gatewayUrl);
@@ -11,6 +12,7 @@ let leaseId = null;
 let heartbeatTimer = null;
 let sawForward = false;
 let sawFinalStop = false;
+let finished = false;
 
 const timeout = setTimeout(() => finish(new Error("gateway smoke test timed out")), 8_000);
 
@@ -19,6 +21,10 @@ function send(type, payload = {}) {
 }
 
 function finish(error = null) {
+  if (finished) {
+    return;
+  }
+  finished = true;
   clearTimeout(timeout);
   clearInterval(heartbeatTimer);
   if (socket.readyState === WebSocket.OPEN) {
@@ -34,6 +40,7 @@ function finish(error = null) {
 
 socket.addEventListener("open", () => {
   send("session.hello", {
+    token: gatewayToken,
     terminalName: "Gateway smoke test",
     client: "gateway-smoke",
     capabilities: ["manual-control", "telemetry"],
@@ -111,3 +118,8 @@ socket.addEventListener("message", (event) => {
 });
 
 socket.addEventListener("error", () => finish(new Error(`cannot connect to ${gatewayUrl}`)));
+socket.addEventListener("close", (event) => {
+  if (!finished) {
+    finish(new Error(`connection closed before completion (${event.code}: ${event.reason})`));
+  }
+});
