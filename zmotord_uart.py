@@ -89,12 +89,12 @@ class MotorConfig:
     close_area_ratio: float = 0.44
     lost_search_enabled: bool = True
     lost_search_delay: float = 10.0
-    search_speed_delta: int = 250
-    search_turn_time_ms: int = 350
+    search_speed_delta: int = 400
+    search_turn_time_ms: int = 250
     search_steps_per_side: int = 3
-    search_observe_seconds: float = 0.50
-    search_step_pause_seconds: float = 0.15
-    search_settle_seconds: float = 0.30
+    search_observe_seconds: float = 0.80
+    search_step_pause_seconds: float = 0.25
+    search_settle_seconds: float = 0.50
 
     @classmethod
     def from_environment(cls) -> "MotorConfig":
@@ -136,11 +136,11 @@ class MotorConfig:
             ),
             search_speed_delta=_env_int(
                 "TENNIS_SEARCH_SPEED_DELTA",
-                250,
+                400,
             ),
             search_turn_time_ms=_env_int(
                 "TENNIS_SEARCH_TURN_MS",
-                350,
+                250,
             ),
             search_steps_per_side=_env_int(
                 "TENNIS_SEARCH_STEPS_PER_SIDE",
@@ -148,15 +148,15 @@ class MotorConfig:
             ),
             search_observe_seconds=_env_float(
                 "TENNIS_SEARCH_OBSERVE_SECONDS",
-                0.50,
+                0.80,
             ),
             search_step_pause_seconds=_env_float(
                 "TENNIS_SEARCH_STEP_PAUSE_SECONDS",
-                0.15,
+                0.25,
             ),
             search_settle_seconds=_env_float(
                 "TENNIS_SEARCH_SETTLE_SECONDS",
-                0.30,
+                0.50,
             ),
         )
         config.validate()
@@ -186,9 +186,9 @@ class MotorConfig:
             raise ValueError("close_area_ratio must be in (0, 1]")
         if self.lost_search_delay <= 0:
             raise ValueError("lost_search_delay must be positive")
-        if not self.min_speed_delta <= self.search_speed_delta <= self.speed_delta:
+        if not self.min_speed_delta <= self.search_speed_delta <= 1000:
             raise ValueError(
-                "search_speed_delta must be between min_speed_delta and speed_delta"
+                "search_speed_delta must be between min_speed_delta and 1000"
             )
         if not 1 <= self.search_turn_time_ms <= 9999:
             raise ValueError("search_turn_time_ms must be between 1 and 9999")
