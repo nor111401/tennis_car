@@ -10,7 +10,7 @@ import {
   createInitialState,
   reduceState,
 } from "./state.js";
-import { DemoTransport, RobotTransport } from "./transport.js";
+import { RobotTransport } from "./transport.js";
 import { RobotVideoSession } from "./video.js";
 
 const elements = Object.fromEntries(
@@ -74,18 +74,6 @@ function connectRealRobot() {
   transport.connect(endpoint, elements.token.value).catch(() => {});
 }
 
-function connectDemo() {
-  disconnect();
-  transport = new DemoTransport({
-    terminalId,
-    onMessage: handleMessage,
-    onStatus: updateConnection,
-  });
-  transport.connect();
-  elements["video-stage"].classList.add("demo");
-  elements["video-status"].textContent = "演示画面";
-}
-
 function disconnect() {
   stopDrive(true);
   if (transport && state.hasControl) {
@@ -97,7 +85,6 @@ function disconnect() {
     transport = null;
     previous.close();
   }
-  elements["video-stage"].classList.remove("demo");
   elements["video-placeholder"].hidden = false;
   elements["video-status"].textContent = "等待视频";
 }
@@ -339,7 +326,6 @@ function connectionLabel(status) {
     OFFLINE: "未连接",
     CONNECTING: "连接中",
     ONLINE: "在线",
-    DEMO: "演示模式",
     ERROR: "连接错误",
   }[status] || status;
 }
@@ -361,7 +347,6 @@ function logEvent(message) {
 }
 
 elements["connect-button"].addEventListener("click", connectRealRobot);
-elements["demo-button"].addEventListener("click", connectDemo);
 elements["lease-button"].addEventListener("click", requestControl);
 elements["estop-button"].addEventListener("click", toggleEmergencyStop);
 elements["clear-log"].addEventListener("click", () => elements["event-log"].replaceChildren());
@@ -455,7 +440,3 @@ if ("serviceWorker" in navigator) {
 
 logEvent("终端已就绪，当前处于只读安全状态");
 render();
-
-if (new URLSearchParams(window.location.search).get("demo") === "1") {
-  connectDemo();
-}

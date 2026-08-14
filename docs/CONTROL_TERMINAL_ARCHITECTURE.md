@@ -155,8 +155,8 @@ MANUAL 转 AUTO：
 
 ## 7. 第一版实现与待办
 
-`control_terminal/` 已包含可运行 PWA、演示传输、控制/视频 WebSocket 客户端、按住式
-控制、心跳、急停界面和协议测试。`robot_gateway/` 已包含 FastAPI WebSocket入口、共享
+`control_terminal/` 已包含可运行 PWA、控制/视频 WebSocket 客户端、按住式控制、心跳、
+急停界面和协议测试。`robot_gateway/` 已包含 FastAPI WebSocket入口、共享
 摄像头与识别运行时、单槽JPEG视频、控制租约、模式仲裁、600ms心跳看门狗、急停锁存、
 遥测发布和 `MotorController` 仲裁。当前部署设置 `TENNIS_MOTOR_ENABLE=1`，但服务仍以
 `AUTO` 启动并直接使用识别结果追球；终端取得控制权后可切换为 MANUAL 或 PAUSED。

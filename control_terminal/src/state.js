@@ -4,7 +4,6 @@ export const ConnectionStatus = Object.freeze({
   OFFLINE: "OFFLINE",
   CONNECTING: "CONNECTING",
   ONLINE: "ONLINE",
-  DEMO: "DEMO",
   ERROR: "ERROR",
 });
 

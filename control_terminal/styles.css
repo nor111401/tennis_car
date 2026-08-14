@@ -75,7 +75,6 @@ button { color: inherit; }
 .button:hover { transform: translateY(-1px); }
 .button-primary { color: #10150b; background: var(--green); }
 .button-primary:hover { background: var(--green-strong); }
-.button-quiet { border-color: var(--line); background: #151e26; }
 .button-outline { border-color: rgba(147,223,63,.45); color: var(--green); background: transparent; }
 
 .status-pill {
@@ -84,8 +83,8 @@ button { color: inherit; }
   color: var(--muted); font-size: 12px;
 }
 .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
-.status-pill.online, .status-pill.demo { color: var(--text); border-color: rgba(147,223,63,.35); }
-.status-pill.online .status-dot, .status-pill.demo .status-dot { background: var(--green); box-shadow: 0 0 10px var(--green); }
+.status-pill.online { color: var(--text); border-color: rgba(147,223,63,.35); }
+.status-pill.online .status-dot { background: var(--green); box-shadow: 0 0 10px var(--green); }
 .status-pill.connecting .status-dot { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
 .status-pill.error .status-dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = "tennis-rover-terminal-v2";
+const CACHE_NAME = "tennis-rover-terminal-v3";
 const APP_SHELL = [
   "./",
   "./index.html",

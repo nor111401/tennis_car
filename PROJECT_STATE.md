@@ -182,7 +182,6 @@ PWM中值1500，合法范围500～2500。当前仅支持：
 - 速度滑块、250ms心跳、紧急停车入口。
 - WebSocket控制客户端和认证JPEG视频客户端。
 - 识别框、置信度、FPS、延迟、电机和UART状态。
-- 演示传输，可在没有树莓派网关时验证完整UI交互。
 - Node内置测试，无需安装npm第三方包。
 
 树莓派认证网关已在 `192.168.0.108:8765` 完成真实链路验证：握手、控制租约、
@@ -241,10 +240,13 @@ PWA清单本地HTTP烟雾测试通过；Windows Edge 1440×1000无头渲染视�
 8/8通过；正式默认配置回放正样本779/779通过、负样本382/382拒绝，新增暗光批次
 176/176通过。实时认证遥测确认`ballDetected=true`、`confidence=0.955`、`inferenceMs=38`、
 `mode=AUTO`、`searchPhase=TRACKING`。用户确认本轮训练和验证期间电机物理总电源关闭。
+控制终端移除演示入口、演示传输和无连接画面提示后，JavaScript语法检查及Node测试8/8通过。
 
 网关部署状态：树莓派 `/home/pi/tennis/.venv-gateway` 已安装 FastAPI、Uvicorn 和 WebSockets；
 `tennis-robot-gateway.service` 已启用并正在运行，开机自动启动。访问令牌仅保存在树莓派
 `/etc/tennis-robot-gateway.env`，权限为 `root:root 600`；无令牌 WebSocket 连接已验证会被拒绝。
+systemd每次启动都从该持久文件读取同一令牌，不会因普通重启自动重新生成；只有替换环境
+文件、重新安装/刷写系统或人工轮换令牌时才会改变。
 服务监听局域网 TCP 8765。2026-08-14 用户确认电机具备物理总电源开关并授权跳过悬空
 测试，当前 systemd 模板已切换为 `TENNIS_MOTOR_ENABLE=1` 并以 `AUTO` 启动。重启后实测
 `mode=AUTO`、`motorOutputEnabled=true`、`cameraOnline=true`、`videoReady=true`、
@@ -279,7 +281,7 @@ TENNIS_MOTOR_ENABLE=1 python3 tennis_ball_rpi.py
 - 2026-08-10 `a91dcd2`：丢球搜索从整段旋转改为每侧3次、每次350ms的分阶段扫描。
 - 2026-08-14：清除缓存、调试截图、过时SSH脚本、一次性启动脚本、本地虚拟环境、日志、
   临时凭据辅助文件和重复模拟器压缩包；保留训练数据、模型和协议资料。
-- 2026-08-14：新增 `control_terminal/` PWA第一版、演示模式、WebSocket/WebRTC客户端、
+- 2026-08-14：新增 `control_terminal/` PWA第一版、WebSocket/WebRTC客户端、
   安全交互、协议测试和 `docs/CONTROL_TERMINAL_ARCHITECTURE.md`。树莓派网关尚未实现。
 - 2026-08-14：新增 `robot_gateway/` WebSocket干运行网关、11项安全核心测试、独立依赖和
   systemd模板；部署到树莓派虚拟环境并通过真实Windows到树莓派控制链路测试。真实视频、
@@ -301,6 +303,8 @@ TENNIS_MOTOR_ENABLE=1 python3 tennis_ball_rpi.py
   重新匹配时可能错配微小轮廓的问题。仅对训练模型置信度不低于0.90的候选放宽圆度、
   填充率、实心度和宽高比，普通颜色候选继续使用严格形状规则；全数据回放正样本779/779、
   负样本0误报，现场暗光网球实时识别恢复。
+- 2026-08-14：按用户要求从控制终端删除演示按钮、模拟传输、`?demo=1`自动入口和未连接
+  画面提示；PWA缓存升级至v3，终端只保留真实树莓派连接路径。
 
 ## 14. 每次修改后的更新检查
 
