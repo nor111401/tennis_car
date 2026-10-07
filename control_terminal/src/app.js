@@ -8,11 +8,17 @@ import {
   ConnectionStatus,
   canSendManualDrive,
   createInitialState,
+  isControlLeaseError,
   reduceState,
 } from "./state.js";
 import { RobotTransport } from "./transport.js";
 import { RobotVideoSession } from "./video.js";
+import { getContainedMediaRect, mapNormalizedBoxToPixels } from "./overlay.js";
 
+const TOKEN_STORAGE_KEY = "tennis-gateway-token";
+const ENDPOINT_STORAGE_KEY = "tennis-endpoint";
+const CURRENT_GATEWAY_ENDPOINT = "ws://10.183.95.9:8765/ws";
+const PREVIOUS_GATEWAY_ENDPOINT = "ws://192.168.0.108:8765/ws";
 const elements = Object.fromEntries(
   [...document.querySelectorAll("[id]")].map((element) => [element.id, element]),
 );
@@ -34,6 +40,7 @@ const videoSession = new RobotVideoSession(
   },
   () => {
     elements["video-placeholder"].hidden = true;
+    renderTargetBox();
   },
 );
 
@@ -65,7 +72,7 @@ function connectRealRobot() {
     updateConnection(ConnectionStatus.ERROR, "地址必须以 ws:// 或 wss:// 开头");
     return;
   }
-  localStorage.setItem("tennis-endpoint", endpoint);
+  localStorage.setItem(ENDPOINT_STORAGE_KEY, endpoint);
   transport = new RobotTransport({
     terminalId,
     onMessage: handleMessage,
@@ -85,6 +92,11 @@ function disconnect() {
     transport = null;
     previous.close();
   }
+  dispatch({
+    type: "connection",
+    status: ConnectionStatus.OFFLINE,
+    detail: "连接已关闭",
+  });
   elements["video-placeholder"].hidden = false;
   elements["video-status"].textContent = "等待视频";
 }
@@ -93,6 +105,9 @@ function handleMessage(message) {
   const payload = message.payload || {};
   switch (message.type) {
     case "session.welcome":
+      if (elements.token.value) {
+        localStorage.setItem(TOKEN_STORAGE_KEY, elements.token.value);
+      }
       logEvent(`已连接 ${payload.robotName || "树莓派小车"}`);
       videoSession.request();
       break;
@@ -120,6 +135,10 @@ function handleMessage(message) {
       dispatch({ type: "mode", mode: payload.mode });
       logEvent(`工作模式已切换为 ${payload.mode}`);
       break;
+    case "task_mode.changed":
+      dispatch({ type: "task-mode", taskMode: payload.taskMode });
+      logEvent(`作业模式已切换为 ${payload.taskMode === "PICKUP" ? "捡球模式" : "追踪模式"}`);
+      break;
     case "safety.estop":
       stopDrive(true);
       dispatch({ type: "estop", active: Boolean(payload.active) });
@@ -133,7 +152,14 @@ function handleMessage(message) {
       });
       break;
     case "command.rejected":
-      logEvent(`指令被拒绝：${payload.reason || "未知原因"}`);
+      if (isControlLeaseError(payload.reason)) {
+        stopDrive(false);
+        dispatch({ type: "control.lost", controllerName: "无人接管" });
+        elements["estop-reset-dialog"].close();
+        logEvent("控制权已失效，请重新申请接管");
+      } else {
+        logEvent(`指令被拒绝：${payload.reason || "未知原因"}`);
+      }
       break;
     case "server.error":
       logEvent(`服务端错误：${payload.message || "未知错误"}`);
@@ -172,19 +198,59 @@ function requestMode(mode) {
   transport.send("mode.set", createModePayload(mode, state.leaseId));
 }
 
+function toggleTaskMode() {
+  if (state.mode === "AUTO") {
+    logEvent("自动模式会在小球从画面下沿消失后自行切换捡球模式");
+    return;
+  }
+  if (!transport || !state.hasControl) {
+    logEvent("切换追踪/捡球模式前需要申请控制权");
+    return;
+  }
+  if (state.emergencyStop || !state.modeGpioEnabled || !state.modeGpioOnline) {
+    logEvent("GPIO输出当前不可用，无法切换追踪/捡球模式");
+    return;
+  }
+  transport.send("task_mode.set", {
+    taskMode: state.taskMode === "TRACKING" ? "PICKUP" : "TRACKING",
+    leaseId: state.leaseId,
+  });
+}
+
 function toggleEmergencyStop() {
   if (!transport) {
     logEvent("未连接，无法发送紧急停车指令");
     return;
   }
-  if (state.emergencyStop
-      && !window.confirm("解除紧急停车后车辆仍保持暂停，确定解除吗？")) {
+  if (state.emergencyStop && !state.hasControl) {
+    logEvent("解除紧急停车前需要先申请控制权");
+    return;
+  }
+  if (state.emergencyStop) {
+    elements["estop-reset-dialog"].showModal();
     return;
   }
   stopDrive(true);
   transport.send("safety.estop", {
-    active: !state.emergencyStop,
-    reason: state.emergencyStop ? "operator-reset" : "operator-button",
+    active: true,
+    reason: "operator-button",
+  });
+}
+
+function handleEmergencyResetDialog() {
+  const dialog = elements["estop-reset-dialog"];
+  if (dialog.returnValue !== "confirm") {
+    return;
+  }
+  if (!transport || !state.emergencyStop || !state.hasControl) {
+    logEvent("解除紧急停车失败：控制权已失效，请重新申请控制权");
+    return;
+  }
+  stopDrive(true);
+  transport.send("safety.estop", {
+    active: false,
+    leaseId: state.leaseId,
+    reason: "operator-reset",
   });
 }
 
@@ -257,6 +323,22 @@ function render() {
     button.disabled = !state.hasControl || state.emergencyStop;
   }
 
+  const pickupMode = state.taskMode === "PICKUP";
+  elements["task-mode-label"].textContent = pickupMode ? "捡球模式" : "追踪模式";
+  elements["task-mode-button"].textContent = pickupMode
+    ? "切换至追踪模式"
+    : "切换至捡球模式";
+  const gpioLevel = state.modeGpioLevel === 1 ? "HIGH" : "LOW";
+  elements["task-mode-status"].textContent = state.modeGpioOnline
+    ? `BCM${state.modeGpioPin} · ${gpioLevel} · GPIO正常`
+    : `BCM${state.modeGpioPin} · ${state.modeGpioError ? "GPIO故障" : "GPIO离线"}`;
+  elements["task-mode-status"].className = state.modeGpioOnline ? "good" : "bad";
+  elements["task-mode-button"].disabled = !state.hasControl
+    || state.mode === "AUTO"
+    || state.emergencyStop
+    || !state.modeGpioEnabled
+    || !state.modeGpioOnline;
+
   elements["controller-state"].textContent = state.controllerName;
   elements["lease-title"].textContent = state.hasControl ? "本终端正在接管" : "只读观察";
   elements["lease-detail"].textContent = state.hasControl
@@ -279,9 +361,13 @@ function render() {
   elements["mode-badge"].textContent = state.mode;
 
   elements["estop-button"].classList.toggle("latched", state.emergencyStop);
+  elements["estop-button"].disabled = state.emergencyStop && !state.hasControl;
   elements["estop-button"].querySelector("strong").textContent = state.emergencyStop
     ? "解除紧急停车"
     : "紧急停车";
+  elements["estop-button"].querySelector("small").textContent = state.emergencyStop
+    ? (state.hasControl ? "解除后保持暂停，请再选择自动追球" : "请先申请控制权后解除")
+    : "立即中断所有运动输出";
 
   const confidencePercent = `${Math.round((state.confidence || 0) * 100)}%`;
   const ballLabel = state.ballDetected ? "已锁定" : "未发现";
@@ -305,6 +391,8 @@ function render() {
 
 function renderTargetBox() {
   const box = elements["target-box"];
+  const stage = elements["video-stage"];
+  const image = elements["robot-video"];
   if (!state.ballDetected || state.ballX == null || state.ballY == null) {
     box.hidden = true;
     return;
@@ -313,11 +401,28 @@ function renderTargetBox() {
   const height = Math.max(0.04, Number(state.ballHeight || width));
   const left = Math.max(0, Math.min(1 - width, state.ballX - width / 2));
   const top = Math.max(0, Math.min(1 - height, state.ballY - height / 2));
+  const stageRect = stage.getBoundingClientRect();
+  const mediaRect = getContainedMediaRect(
+    stageRect.width,
+    stageRect.height,
+    image.naturalWidth || image.clientWidth,
+    image.naturalHeight || image.clientHeight,
+  );
+  const pixels = mapNormalizedBoxToPixels(mediaRect, {
+    x: left,
+    y: top,
+    width,
+    height,
+  });
+  if (!mediaRect.width || !mediaRect.height) {
+    box.hidden = true;
+    return;
+  }
   box.hidden = false;
-  box.style.left = `${left * 100}%`;
-  box.style.top = `${top * 100}%`;
-  box.style.width = `${width * 100}%`;
-  box.style.height = `${height * 100}%`;
+  box.style.left = `${pixels.left / stageRect.width * 100}%`;
+  box.style.top = `${pixels.top / stageRect.height * 100}%`;
+  box.style.width = `${pixels.width / stageRect.width * 100}%`;
+  box.style.height = `${pixels.height / stageRect.height * 100}%`;
   elements["target-label"].textContent = `TENNIS ${Math.round(state.confidence * 100)}%`;
 }
 
@@ -346,9 +451,17 @@ function logEvent(message) {
   }
 }
 
+function clearSavedToken() {
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
+  elements.token.value = "";
+  logEvent("已清除本机保存的访问令牌");
+}
+
 elements["connect-button"].addEventListener("click", connectRealRobot);
 elements["lease-button"].addEventListener("click", requestControl);
+elements["task-mode-button"].addEventListener("click", toggleTaskMode);
 elements["estop-button"].addEventListener("click", toggleEmergencyStop);
+elements["estop-reset-dialog"].addEventListener("close", handleEmergencyResetDialog);
 elements["clear-log"].addEventListener("click", () => elements["event-log"].replaceChildren());
 elements["speed-slider"].addEventListener("input", render);
 
@@ -426,11 +539,20 @@ window.addEventListener("beforeunload", () => {
   stopDrive(true);
   transport?.close();
 });
+window.addEventListener("resize", renderTargetBox);
 
-const savedEndpoint = localStorage.getItem("tennis-endpoint");
-if (savedEndpoint) {
+const savedEndpoint = localStorage.getItem(ENDPOINT_STORAGE_KEY);
+if (!savedEndpoint || savedEndpoint === PREVIOUS_GATEWAY_ENDPOINT) {
+  elements.endpoint.value = CURRENT_GATEWAY_ENDPOINT;
+  localStorage.setItem(ENDPOINT_STORAGE_KEY, CURRENT_GATEWAY_ENDPOINT);
+} else {
   elements.endpoint.value = savedEndpoint;
 }
+const savedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+if (savedToken) {
+  elements.token.value = savedToken;
+}
+elements["clear-token-button"].addEventListener("click", clearSavedToken);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {

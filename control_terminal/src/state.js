@@ -7,11 +7,26 @@ export const ConnectionStatus = Object.freeze({
   ERROR: "ERROR",
 });
 
+const CONTROL_LEASE_ERRORS = new Set([
+  "CONTROL_LEASE_REQUIRED",
+  "INVALID_CONTROL_LEASE",
+]);
+
+export function isControlLeaseError(reason) {
+  return CONTROL_LEASE_ERRORS.has(reason);
+}
+
 export function createInitialState() {
   return {
     connection: ConnectionStatus.OFFLINE,
     connectionDetail: "尚未连接",
     mode: RobotMode.AUTO,
+    taskMode: "TRACKING",
+    modeGpioEnabled: false,
+    modeGpioPin: 17,
+    modeGpioOnline: false,
+    modeGpioLevel: null,
+    modeGpioError: null,
     motion: Motion.STOP,
     emergencyStop: false,
     hasControl: false,
@@ -58,6 +73,7 @@ export function reduceState(state, event) {
         controllerName: event.controllerName || "本终端",
       };
     case "control.released":
+    case "control.lost":
       return {
         ...state,
         hasControl: false,
@@ -76,6 +92,11 @@ export function reduceState(state, event) {
         ...state,
         mode: event.mode,
         motion: Motion.STOP,
+      };
+    case "task-mode":
+      return {
+        ...state,
+        taskMode: event.taskMode,
       };
     case "estop":
       return {

@@ -25,6 +25,14 @@ from tennis_ball_verifier import (
 
 
 MODEL_THRESHOLD = 0.70
+LIGHTING_CONDITIONS = (
+    "original",
+    "low_light",
+    "overexposed",
+    "warm_light",
+    "cool_light",
+    "uneven_light",
+)
 
 
 def load_rgb(path: Path) -> np.ndarray:
@@ -95,28 +103,71 @@ def vivid_boxes(image_rgb: np.ndarray) -> list[tuple[float, float, float, float]
 
 
 def split_session_files(root: Path, validation_fraction: float) -> tuple[list[Path], list[Path]]:
+    """Hold out complete capture sessions instead of adjacent video frames."""
     train: list[Path] = []
     validation: list[Path] = []
     session_folders = sorted(path for path in root.iterdir() if path.is_dir())
-    for session in session_folders:
-        files = sorted(session.glob("*.jpg"))
-        if not files:
-            continue
-        validation_count = max(1, int(math.ceil(len(files) * validation_fraction)))
-        train.extend(files[:-validation_count])
-        validation.extend(files[-validation_count:])
+    session_folders = [
+        session for session in session_folders if any(session.glob("*.jpg"))
+    ]
+    if len(session_folders) < 2:
+        raise ValueError(f"Need at least two capture sessions in {root}")
+    if not 0.0 < validation_fraction < 1.0:
+        raise ValueError("validation_fraction must be between 0 and 1")
+    validation_count = max(
+        1,
+        min(
+            len(session_folders) - 1,
+            int(math.ceil(len(session_folders) * validation_fraction)),
+        ),
+    )
+    for session in session_folders[:-validation_count]:
+        train.extend(sorted(session.glob("*.jpg")))
+    for session in session_folders[-validation_count:]:
+        validation.extend(sorted(session.glob("*.jpg")))
     return train, validation
 
 
-def color_jitter(patch: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    pixels = patch.astype(np.float32)
-    contrast = rng.uniform(0.86, 1.14)
-    brightness = rng.uniform(-14.0, 14.0)
-    channel_gain = rng.uniform(0.94, 1.06, size=(1, 1, 3))
-    pixels = (pixels - 127.5) * contrast + 127.5 + brightness
-    pixels *= channel_gain
-    noise = rng.normal(0.0, rng.uniform(0.0, 2.5), size=pixels.shape)
-    return np.clip(pixels + noise, 0.0, 255.0).astype(np.uint8)
+def simulate_lighting(
+    patch: np.ndarray,
+    condition: str,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Apply a deterministic family of camera-like illumination changes."""
+    if condition not in LIGHTING_CONDITIONS:
+        raise ValueError(f"Unknown lighting condition: {condition}")
+    pixels = patch.astype(np.float32) / 255.0
+
+    if condition == "low_light":
+        pixels = np.power(pixels, rng.uniform(1.25, 1.65)) * rng.uniform(0.42, 0.65)
+    elif condition == "overexposed":
+        pixels = np.power(pixels, rng.uniform(0.65, 0.85)) * rng.uniform(1.18, 1.48)
+    elif condition == "warm_light":
+        pixels *= np.asarray((1.18, 1.02, 0.78), dtype=np.float32)
+        pixels = (pixels - 0.5) * rng.uniform(0.90, 1.08) + 0.5
+    elif condition == "cool_light":
+        pixels *= np.asarray((0.78, 1.00, 1.20), dtype=np.float32)
+        pixels = (pixels - 0.5) * rng.uniform(0.90, 1.08) + 0.5
+    elif condition == "uneven_light":
+        height, width = pixels.shape[:2]
+        axis = np.linspace(0.38, 1.08, width if rng.random() < 0.5 else height)
+        if rng.random() < 0.5:
+            axis = axis[::-1]
+        shade = axis.reshape(1, width, 1) if len(axis) == width else axis.reshape(height, 1, 1)
+        pixels *= shade.astype(np.float32)
+        yy, xx = np.mgrid[0:height, 0:width]
+        center_x = rng.uniform(0.15, 0.85) * width
+        center_y = rng.uniform(0.15, 0.85) * height
+        radius = max(height, width) * rng.uniform(0.22, 0.42)
+        hotspot = np.exp(-((xx - center_x) ** 2 + (yy - center_y) ** 2) / (2.0 * radius ** 2))
+        pixels = pixels * (1.0 - 0.38 * hotspot[..., None]) + 0.38 * hotspot[..., None]
+
+    if condition != "original":
+        contrast = rng.uniform(0.90, 1.10)
+        pixels = (pixels - 0.5) * contrast + 0.5
+        noise_sigma = rng.uniform(0.0, 0.018 if condition == "low_light" else 0.010)
+        pixels += rng.normal(0.0, noise_sigma, size=pixels.shape)
+    return np.clip(pixels * 255.0, 0.0, 255.0).astype(np.uint8)
 
 
 def jittered_positive_patches(
@@ -143,10 +194,27 @@ def jittered_positive_patches(
         patch = expanded_crop(image_rgb, shifted, expansion)
         if index % 2:
             patch = np.ascontiguousarray(patch[:, ::-1])
-        if index:
-            patch = color_jitter(patch, rng)
+        patch = simulate_lighting(patch, LIGHTING_CONDITIONS[index], rng)
         patches.append(patch)
     return patches
+
+
+def append_negative_patch(
+    features: list[np.ndarray],
+    labels: list[int],
+    patch: np.ndarray,
+    rng: np.random.Generator,
+    augment: bool,
+    augmentation_index: int,
+) -> int:
+    features.append(extract_features(patch))
+    labels.append(0)
+    if not augment:
+        return 0
+    condition = LIGHTING_CONDITIONS[1 + augmentation_index % (len(LIGHTING_CONDITIONS) - 1)]
+    features.append(extract_features(simulate_lighting(patch, condition, rng)))
+    labels.append(0)
+    return 1
 
 
 def random_negative_boxes(
@@ -193,6 +261,7 @@ def build_samples(
         "proposal_negatives": 0,
         "vivid_negatives": 0,
         "random_negatives": 0,
+        "lighting_augmented_negatives": 0,
         "missing_positive": 0,
     }
 
@@ -217,8 +286,14 @@ def build_samples(
         for box in proposals:
             if target is not None and overlap_fraction(box, target) > 0.20:
                 continue
-            features.append(extract_features(expanded_crop(image_rgb, box)))
-            labels.append(0)
+            counts["lighting_augmented_negatives"] += append_negative_patch(
+                features,
+                labels,
+                expanded_crop(image_rgb, box),
+                rng,
+                augment,
+                proposal_negative_count,
+            )
             counts["proposal_negatives"] += 1
             proposal_negative_count += 1
             if proposal_negative_count >= negative_limit:
@@ -230,18 +305,99 @@ def build_samples(
                 continue
             if any(overlap_fraction(box, proposal) > 0.70 for proposal in proposals):
                 continue
-            features.append(extract_features(expanded_crop(image_rgb, box)))
-            labels.append(0)
+            counts["lighting_augmented_negatives"] += append_negative_patch(
+                features,
+                labels,
+                expanded_crop(image_rgb, box),
+                rng,
+                augment,
+                vivid_count + 1,
+            )
             counts["vivid_negatives"] += 1
             vivid_count += 1
             if vivid_count >= (2 if augment else 1):
                 break
 
         random_count = 3 if augment else 2
-        for box in random_negative_boxes(image_rgb, rng, random_count, target):
-            features.append(extract_features(expanded_crop(image_rgb, box, 1.0)))
-            labels.append(0)
+        for random_index, box in enumerate(
+            random_negative_boxes(image_rgb, rng, random_count, target)
+        ):
+            counts["lighting_augmented_negatives"] += append_negative_patch(
+                features,
+                labels,
+                expanded_crop(image_rgb, box, 1.0),
+                rng,
+                augment,
+                random_index + 2,
+            )
             counts["random_negatives"] += 1
+
+    return features, labels, counts
+
+
+def build_annotated_positive_samples(
+    root: Path,
+    augment: bool,
+) -> tuple[list[np.ndarray], list[int], dict[str, int]]:
+    """Build one positive training target for every annotated ball box.
+
+    Full-frame positive folders can only choose the largest color proposal.
+    Explicit annotations let a touching-ball scene contribute both physical
+    balls independently without teaching the verifier that their merged blob
+    is one object.
+    """
+    features: list[np.ndarray] = []
+    labels: list[int] = []
+    counts = {
+        "frames": 0,
+        "objects": 0,
+        "positive_patches": 0,
+    }
+    if not root.exists():
+        return features, labels, counts
+
+    for annotation_path in sorted(root.rglob("*.json")):
+        payload = json.loads(annotation_path.read_text(encoding="utf-8"))
+        image_name = str(payload.get("image", "")).strip()
+        if not image_name:
+            raise ValueError(f"Missing image in {annotation_path}")
+        image_path = annotation_path.parent / image_name
+        image_rgb = load_rgb(image_path)
+        image_height, image_width = image_rgb.shape[:2]
+        if int(payload.get("width", image_width)) != image_width:
+            raise ValueError(f"Width mismatch in {annotation_path}")
+        if int(payload.get("height", image_height)) != image_height:
+            raise ValueError(f"Height mismatch in {annotation_path}")
+
+        objects = payload.get("objects", [])
+        if not isinstance(objects, list):
+            raise ValueError(f"Objects must be a list in {annotation_path}")
+        rng = path_rng(annotation_path)
+        frame_objects = 0
+        for item in objects:
+            if not isinstance(item, dict) or item.get("label") != "tennis_ball":
+                continue
+            bbox = item.get("bbox")
+            if not isinstance(bbox, dict):
+                raise ValueError(f"Missing bbox in {annotation_path}")
+            box = tuple(float(bbox[name]) for name in (
+                "x", "y", "width", "height"
+            ))
+            if box[2] <= 0 or box[3] <= 0:
+                raise ValueError(f"Invalid bbox in {annotation_path}")
+            for patch in jittered_positive_patches(
+                image_rgb,
+                box,
+                rng,
+                augment,
+            ):
+                features.append(extract_features(patch))
+                labels.append(1)
+                counts["positive_patches"] += 1
+            frame_objects += 1
+        if frame_objects:
+            counts["frames"] += 1
+            counts["objects"] += frame_objects
 
     return features, labels, counts
 
@@ -278,6 +434,41 @@ def metric_summary(labels: np.ndarray, probabilities: np.ndarray) -> dict[str, o
     }
 
 
+def session_names(files: list[Path]) -> list[str]:
+    return sorted({path.parent.name for path in files})
+
+
+def session_descriptors(files: list[Path]) -> list[dict[str, str]]:
+    descriptors: list[dict[str, str]] = []
+    for session_name in session_names(files):
+        session = next(path.parent for path in files if path.parent.name == session_name)
+        condition = "unlabeled"
+        metadata_path = session / "session.json"
+        if metadata_path.exists():
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            condition = str(metadata.get("lighting_condition", condition))
+        descriptors.append({"session": session_name, "lighting_condition": condition})
+    return descriptors
+
+
+def fit_classifier(
+    features: np.ndarray,
+    labels: np.ndarray,
+    regularization: float,
+) -> tuple[StandardScaler, LogisticRegression, np.ndarray]:
+    scaler = StandardScaler()
+    scaled = scaler.fit_transform(features)
+    classifier = LogisticRegression(
+        C=regularization,
+        class_weight="balanced",
+        max_iter=1000,
+        solver="liblinear",
+        random_state=20260808,
+    )
+    classifier.fit(scaled, labels)
+    return scaler, classifier, scaled
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=Path, default=Path("training_data"))
@@ -310,6 +501,17 @@ def main() -> None:
         train_labels.extend(labels)
         train_counts[name] = counts
         print(f"Training {name}: {counts}")
+
+    annotated_features, annotated_labels, annotated_counts = (
+        build_annotated_positive_samples(
+            args.data / "annotated",
+            augment=True,
+        )
+    )
+    train_features.extend(annotated_features)
+    train_labels.extend(annotated_labels)
+    train_counts["annotated_positive"] = annotated_counts
+    print(f"Training annotated_positive: {annotated_counts}")
 
     validation_features: list[np.ndarray] = []
     validation_labels: list[int] = []
@@ -364,7 +566,40 @@ def main() -> None:
     selected_c = float(classifier.C)
     validation_metrics = metric_summary(y_validation, validation_probabilities)
     train_probabilities = classifier.predict_proba(scaled_train)[:, 1]
-    train_metrics = metric_summary(y_train, train_probabilities)
+    selection_train_metrics = metric_summary(y_train, train_probabilities)
+
+    # The held-out sessions remain untouched while choosing C and reporting
+    # validation metrics. Once selection is complete, include those reviewed
+    # frames in the deployed model so valuable dark-light sessions are not
+    # permanently discarded from training.
+    refit_features: list[np.ndarray] = []
+    refit_labels: list[int] = []
+    refit_counts: dict[str, dict[str, int]] = {}
+    for name, files, contains_ball in (
+        ("positive", positive_validation, True),
+        ("negative", negative_validation, False),
+    ):
+        features, labels, counts = build_samples(files, contains_ball, augment=True)
+        refit_features.extend(features)
+        refit_labels.extend(labels)
+        refit_counts[name] = counts
+        print(f"Deployment refit {name}: {counts}")
+
+    x_deployment = np.concatenate(
+        (x_train, np.asarray(refit_features, dtype=np.float32)),
+        axis=0,
+    )
+    y_deployment = np.concatenate(
+        (y_train, np.asarray(refit_labels, dtype=np.int8)),
+        axis=0,
+    )
+    scaler, classifier, scaled_deployment = fit_classifier(
+        x_deployment,
+        y_deployment,
+        selected_c,
+    )
+    deployment_probabilities = classifier.predict_proba(scaled_deployment)[:, 1]
+    train_metrics = metric_summary(y_deployment, deployment_probabilities)
 
     scale = scaler.scale_.astype(np.float32)
     scale[scale < 1e-7] = 1.0
@@ -382,20 +617,32 @@ def main() -> None:
     report = {
         "model": str(args.output),
         "selected_C": selected_c,
-        "feature_count": int(x_train.shape[1]),
-        "train_sample_count": int(len(y_train)),
+        "feature_count": int(x_deployment.shape[1]),
+        "train_sample_count": int(len(y_deployment)),
+        "selection_train_sample_count": int(len(y_train)),
         "validation_sample_count": int(len(y_validation)),
         "train_class_count": {
-            "negative": int(np.count_nonzero(y_train == 0)),
-            "positive": int(np.count_nonzero(y_train == 1)),
+            "negative": int(np.count_nonzero(y_deployment == 0)),
+            "positive": int(np.count_nonzero(y_deployment == 1)),
         },
         "validation_class_count": {
             "negative": int(np.count_nonzero(y_validation == 0)),
             "positive": int(np.count_nonzero(y_validation == 1)),
         },
-        "train_frame_counts": train_counts,
+        "split": {
+            "strategy": "hold_out_complete_capture_sessions_then_refit_all",
+            "validation_fraction": args.validation_fraction,
+            "positive_train_sessions": session_descriptors(positive_train),
+            "positive_validation_sessions": session_descriptors(positive_validation),
+            "negative_train_sessions": session_descriptors(negative_train),
+            "negative_validation_sessions": session_descriptors(negative_validation),
+        },
+        "lighting_augmentation_conditions": list(LIGHTING_CONDITIONS),
+        "selection_train_frame_counts": train_counts,
+        "deployment_refit_frame_counts": refit_counts,
         "validation_frame_counts": validation_counts,
         "train_metrics": train_metrics,
+        "selection_train_metrics": selection_train_metrics,
         "validation_metrics": validation_metrics,
         "trials": trials,
     }

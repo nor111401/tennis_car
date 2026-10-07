@@ -16,6 +16,12 @@ export class RobotVideoSession {
     this.pendingBlob = null;
     this.decoding = false;
     this.connected = false;
+    this.active = false;
+    this.connectionContext = null;
+    this.retryTimer = null;
+    this.watchdogTimer = null;
+    this.retryAttempt = 0;
+    this.lastFrameAt = 0;
   }
 
   request() {
@@ -34,31 +40,85 @@ export class RobotVideoSession {
       return;
     }
 
-    const endpoint = resolveVideoEndpoint(controlUrl, payload.endpoint);
+    this.active = true;
+    this.connectionContext = {
+      endpoint: resolveVideoEndpoint(controlUrl, payload.endpoint),
+      token,
+      terminalId,
+    };
+    this.retryAttempt = 0;
+    this.openSocket();
+  }
+
+  openSocket() {
+    if (!this.active || !this.connectionContext) {
+      return;
+    }
+    const { endpoint, token, terminalId } = this.connectionContext;
     const socket = new WebSocket(endpoint);
     socket.binaryType = "blob";
     this.socket = socket;
     this.onStatus("正在连接实时画面");
 
     socket.addEventListener("open", () => {
+      if (this.socket !== socket || !this.active) {
+        return;
+      }
+      this.retryAttempt = 0;
+      this.lastFrameAt = Date.now();
       socket.send(JSON.stringify({ token, terminalId }));
     });
     socket.addEventListener("message", (event) => {
       if (event.data instanceof Blob && event.data.size > 0) {
+        this.lastFrameAt = Date.now();
         this.enqueueFrame(event.data);
       }
     });
     socket.addEventListener("close", (event) => {
       if (this.socket === socket) {
         this.socket = null;
-        this.onStatus(
-          event.code === 1000 ? "实时画面已关闭" : `视频已断开（${event.code}）`,
-        );
+        if (this.active) {
+          this.scheduleReconnect(
+            event.code === 1000 ? "实时画面已关闭，正在重连" : `视频已断开（${event.code}），正在重连`,
+          );
+        }
       }
     });
     socket.addEventListener("error", () => {
-      this.onStatus("无法连接实时画面");
+      if (this.socket === socket && this.active) {
+        this.onStatus("视频连接异常，正在重连");
+      }
     });
+
+    this.startWatchdog(socket);
+  }
+
+  startWatchdog(socket) {
+    clearInterval(this.watchdogTimer);
+    this.watchdogTimer = setInterval(() => {
+      if (this.socket !== socket || !this.active) {
+        return;
+      }
+      if (Date.now() - this.lastFrameAt <= 3000) {
+        return;
+      }
+      this.onStatus("视频帧超时，正在重连");
+      socket.close(4000, "video frame timeout");
+    }, 1000);
+  }
+
+  scheduleReconnect(status) {
+    clearInterval(this.watchdogTimer);
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.connected = false;
+    this.onStatus(status);
+    const delay = Math.min(5000, 500 * (2 ** this.retryAttempt));
+    this.retryAttempt += 1;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.openSocket();
+    }, delay);
   }
 
   enqueueFrame(blob) {
@@ -107,6 +167,12 @@ export class RobotVideoSession {
   }
 
   close() {
+    this.active = false;
+    this.connectionContext = null;
+    clearTimeout(this.retryTimer);
+    clearInterval(this.watchdogTimer);
+    this.retryTimer = null;
+    this.watchdogTimer = null;
     if (this.socket) {
       this.socket.close(1000, "video session closed");
       this.socket = null;
@@ -114,6 +180,7 @@ export class RobotVideoSession {
     this.pendingBlob = null;
     this.decoding = false;
     this.connected = false;
+    this.lastFrameAt = 0;
     this.imageElement.onload = null;
     this.imageElement.onerror = null;
     this.imageElement.removeAttribute("src");

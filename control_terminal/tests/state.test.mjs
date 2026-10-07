@@ -6,6 +6,7 @@ import {
   ConnectionStatus,
   canSendManualDrive,
   createInitialState,
+  isControlLeaseError,
   reduceState,
 } from "../src/state.js";
 
@@ -40,6 +41,33 @@ test("disconnect clears control and motion", () => {
   assert.equal(disconnected.motion, Motion.STOP);
   assert.equal(disconnected.hasControl, false);
   assert.equal(disconnected.leaseId, null);
+});
+
+test("expired server lease clears stale local control state", () => {
+  const stale = {
+    ...createInitialState(),
+    connection: ConnectionStatus.ONLINE,
+    mode: RobotMode.EMERGENCY_STOP,
+    emergencyStop: true,
+    hasControl: true,
+    leaseId: "expired-lease",
+    controllerName: "本终端",
+  };
+  const recovered = reduceState(stale, {
+    type: "control.lost",
+    controllerName: "无人接管",
+  });
+  assert.equal(recovered.hasControl, false);
+  assert.equal(recovered.leaseId, null);
+  assert.equal(recovered.controllerName, "无人接管");
+  assert.equal(recovered.motion, Motion.STOP);
+  assert.equal(recovered.emergencyStop, true);
+});
+
+test("server lease rejection reasons are recognized", () => {
+  assert.equal(isControlLeaseError("CONTROL_LEASE_REQUIRED"), true);
+  assert.equal(isControlLeaseError("INVALID_CONTROL_LEASE"), true);
+  assert.equal(isControlLeaseError("EMERGENCY_STOP_LATCHED"), false);
 });
 
 test("emergency stop latches stop and blocks manual driving", () => {

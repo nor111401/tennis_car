@@ -20,4 +20,4 @@ printf '%s\n' \
     > "$site_packages/tennis-system-packages.pth"
 
 "$venv_dir/bin/python" -c \
-    'import cv2, fastapi, numpy; from picamera2 import Picamera2; print("gateway imports ok")'
+    'import cv2, fastapi, lgpio, numpy; from picamera2 import Picamera2; print("gateway imports ok")'

@@ -32,6 +32,11 @@ class GatewayMotion(str, Enum):
     TURN_RIGHT = "TURN_RIGHT"
 
 
+class TaskMode(str, Enum):
+    TRACKING = "TRACKING"
+    PICKUP = "PICKUP"
+
+
 @dataclass
 class ClientSession:
     terminal_id: str
@@ -49,6 +54,7 @@ class ControlLease:
 @dataclass
 class GatewayState:
     mode: GatewayMode = GatewayMode.AUTO
+    task_mode: TaskMode = TaskMode.TRACKING
     motion: GatewayMotion = GatewayMotion.STOP
     emergency_stop: bool = False
     controller_name: str = "无人接管"
@@ -69,10 +75,16 @@ class GatewayState:
     motor_output_enabled: bool = False
     runtime_error: str | None = None
     manual_speed: float = 0.0
+    mode_gpio_enabled: bool = False
+    mode_gpio_pin: int = 17
+    mode_gpio_online: bool = False
+    mode_gpio_level: int | None = None
+    mode_gpio_error: str | None = None
 
     def telemetry(self, connected_clients: int) -> dict[str, Any]:
         return {
             "mode": self.mode.value,
+            "taskMode": self.task_mode.value,
             "motion": self.motion.value,
             "emergencyStop": self.emergency_stop,
             "controllerName": self.controller_name,
@@ -94,6 +106,11 @@ class GatewayState:
             "runtimeError": self.runtime_error,
             "connectedClients": connected_clients,
             "gatewayDryRun": not self.motor_output_enabled,
+            "modeGpioEnabled": self.mode_gpio_enabled,
+            "modeGpioPin": self.mode_gpio_pin,
+            "modeGpioOnline": self.mode_gpio_online,
+            "modeGpioLevel": self.mode_gpio_level,
+            "modeGpioError": self.mode_gpio_error,
         }
 
 
@@ -139,6 +156,7 @@ class RobotGatewayCore:
                 "videoReady": self.state.video_available,
                 "motorOutputEnabled": self.state.motor_output_enabled,
                 "supportedModes": ["AUTO", "MANUAL", "PAUSED"],
+                "supportedTaskModes": ["TRACKING", "PICKUP"],
                 "supportedManualMotions": sorted(self.SUPPORTED_MANUAL_MOTIONS),
             }
 
@@ -152,6 +170,7 @@ class RobotGatewayCore:
             if manual_was_active:
                 self.state.mode = GatewayMode.MANUAL_LOST
                 self._force_stop()
+                self.state.task_mode = TaskMode.TRACKING
             return True
 
     def handle(self, envelope: ClientEnvelope) -> CoreResult:
@@ -168,6 +187,7 @@ class RobotGatewayCore:
                 "control.release": self._handle_control_release,
                 "control.heartbeat": self._handle_heartbeat,
                 "mode.set": self._handle_mode_set,
+                "task_mode.set": self._handle_task_mode_set,
                 "control.command": self._handle_control_command,
                 "safety.estop": self._handle_estop,
                 "video.request": self._handle_video_request,
@@ -189,6 +209,7 @@ class RobotGatewayCore:
             if manual_was_active:
                 self.state.mode = GatewayMode.MANUAL_LOST
                 self._force_stop()
+                self.state.task_mode = TaskMode.TRACKING
             return True
 
     def telemetry(self) -> dict[str, Any]:
@@ -202,6 +223,7 @@ class RobotGatewayCore:
                 "motion": self.state.motion,
                 "manual_speed": self.state.manual_speed,
                 "emergency_stop": self.state.emergency_stop,
+                "task_mode": self.state.task_mode,
             }
 
     def configure_runtime(
@@ -209,11 +231,16 @@ class RobotGatewayCore:
         *,
         video_available: bool,
         motor_output_enabled: bool,
+        mode_gpio_enabled: bool = False,
+        mode_gpio_pin: int = 17,
         boot_mode: GatewayMode | None = None,
     ) -> None:
         with self._lock:
             self.state.video_available = video_available
             self.state.motor_output_enabled = motor_output_enabled
+            self.state.mode_gpio_enabled = mode_gpio_enabled
+            self.state.mode_gpio_pin = mode_gpio_pin
+            self.state.task_mode = TaskMode.TRACKING
             if boot_mode is not None:
                 self.state.mode = boot_mode
                 self._force_stop()
@@ -250,16 +277,43 @@ class RobotGatewayCore:
         search_phase: str,
         motor_online: bool,
         uart_online: bool,
+        auto_pickup: bool = False,
     ) -> None:
         with self._lock:
             self.state.motion = motion
             self.state.search_phase = search_phase
             self.state.motor_online = motor_online
             self.state.uart_online = uart_online
+            if self.state.mode is GatewayMode.AUTO:
+                self.state.task_mode = (
+                    TaskMode.PICKUP
+                    if auto_pickup
+                    and motion in (GatewayMotion.FORWARD, GatewayMotion.STOP)
+                    and self.state.motor_output_enabled
+                    and motor_online
+                    and uart_online
+                    and self.state.camera_online
+                    and self.state.runtime_error is None
+                    and not self.state.emergency_stop
+                    else TaskMode.TRACKING
+                )
+
+    def update_mode_gpio(
+        self,
+        *,
+        online: bool,
+        level: int | None,
+        error: str | None = None,
+    ) -> None:
+        with self._lock:
+            self.state.mode_gpio_online = online
+            self.state.mode_gpio_level = level
+            self.state.mode_gpio_error = error[:300] if error else None
 
     def report_runtime_error(self, message: str, *, camera_failed: bool = False) -> None:
         with self._lock:
             self._force_stop()
+            self.state.task_mode = TaskMode.TRACKING
             self.state.runtime_error = message[:300]
             if camera_failed:
                 self.state.camera_online = False
@@ -313,6 +367,7 @@ class RobotGatewayCore:
         if self.state.mode is GatewayMode.MANUAL:
             self.state.mode = GatewayMode.PAUSED
         self._force_stop()
+        self.state.task_mode = TaskMode.TRACKING
         self._release_lease()
         return CoreResult((("control.released", {}),), True)
 
@@ -343,6 +398,7 @@ class RobotGatewayCore:
             return self._rejected("UNSUPPORTED_MODE")
         self._force_stop()
         self.state.mode = GatewayMode(raw_mode)
+        self.state.task_mode = TaskMode.TRACKING
         self.lease.last_heartbeat = self.clock()
         return CoreResult((("mode.changed", {"mode": raw_mode}),), True)
 
@@ -379,6 +435,31 @@ class RobotGatewayCore:
         self.lease.last_heartbeat = self.clock()
         return CoreResult(state_changed=True)
 
+    def _handle_task_mode_set(
+        self,
+        session: ClientSession,
+        payload: dict[str, Any],
+    ) -> CoreResult:
+        rejected = self._validate_lease(session, payload)
+        if rejected is not None:
+            return rejected
+        if self.state.emergency_stop:
+            return self._rejected("EMERGENCY_STOP_LATCHED")
+        if not self.state.mode_gpio_enabled:
+            return self._rejected("MODE_GPIO_DISABLED")
+        if self.state.mode is GatewayMode.AUTO:
+            return self._rejected("AUTO_TASK_MODE_MANAGED")
+
+        raw_mode = payload.get("taskMode")
+        if raw_mode not in {TaskMode.TRACKING.value, TaskMode.PICKUP.value}:
+            return self._rejected("UNSUPPORTED_TASK_MODE")
+        task_mode = TaskMode(raw_mode)
+        self.state.task_mode = task_mode
+        self.lease.last_heartbeat = self.clock()
+        return CoreResult((
+            ("task_mode.changed", {"taskMode": task_mode.value}),
+        ), True)
+
     def _handle_estop(
         self,
         session: ClientSession,
@@ -391,6 +472,7 @@ class RobotGatewayCore:
             self.state.emergency_stop = True
             self.state.mode = GatewayMode.EMERGENCY_STOP
             self._force_stop()
+            self.state.task_mode = TaskMode.TRACKING
             return CoreResult((("safety.estop", {"active": True}),), True)
 
         rejected = self._validate_lease(session, payload, require_id=False)
@@ -399,6 +481,7 @@ class RobotGatewayCore:
         self.state.emergency_stop = False
         self.state.mode = GatewayMode.PAUSED
         self._force_stop()
+        self.state.task_mode = TaskMode.TRACKING
         self.lease.last_heartbeat = self.clock()
         return CoreResult((("safety.estop", {"active": False}),), True)
 

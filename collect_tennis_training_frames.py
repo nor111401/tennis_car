@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import json
 from pathlib import Path
 import time
 
@@ -25,6 +26,17 @@ def parse_args():
     parser.add_argument("--duration", type=float, default=40.0)
     parser.add_argument("--fps", type=float, default=5.0)
     parser.add_argument(
+        "--condition",
+        choices=("normal", "low_light", "bright", "backlight", "warm", "cool", "mixed"),
+        default="normal",
+        help="Lighting condition recorded in the session name and metadata.",
+    )
+    parser.add_argument(
+        "--note",
+        default="",
+        help="Optional non-sensitive collection note, such as room or lamp setup.",
+    )
+    parser.add_argument(
         "--root",
         type=Path,
         default=Path("/home/pi/tennis/training_data"),
@@ -39,9 +51,23 @@ def main():
     if args.fps <= 0:
         raise ValueError("fps must be positive")
 
-    session_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{args.condition}"
     output_folder = args.root / args.mode / session_name
     output_folder.mkdir(parents=True, exist_ok=False)
+    metadata_path = output_folder / "session.json"
+    metadata = {
+        "version": 1,
+        "mode": args.mode,
+        "lighting_condition": args.condition,
+        "duration_seconds": args.duration,
+        "capture_fps": args.fps,
+        "note": args.note,
+        "saved_frames": 0,
+    }
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     camera = Picamera2()
     camera.configure(
@@ -81,6 +107,12 @@ def main():
                 print(f"COLLECTED {saved}")
     finally:
         camera.stop()
+
+    metadata["saved_frames"] = saved
+    metadata_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
     print(f"COLLECTION COMPLETE mode={args.mode} frames={saved}")
     print(f"OUTPUT={output_folder}")

@@ -23,13 +23,14 @@
     <div class="connection-bar">
       <label class="endpoint-field">
         <span>树莓派地址</span>
-        <input id="endpoint" value="ws://192.168.0.108:8765/ws" spellcheck="false">
+        <input id="endpoint" value="ws://10.183.95.9:8765/ws" spellcheck="false">
       </label>
       <label class="token-field">
         <span>访问令牌</span>
         <input id="token" type="password" placeholder="未配置">
       </label>
       <button id="connect-button" class="button button-primary">连接小车</button>
+      <button id="clear-token-button" class="button button-outline" type="button">清除令牌</button>
     </div>
 
     <div id="connection-pill" class="status-pill offline">
@@ -86,6 +87,16 @@
           <button class="mode-button" data-mode="PAUSED"><span>P</span>暂停观察</button>
         </div>
 
+        <div class="task-mode-row">
+          <div>
+            <strong id="task-mode-label">追踪模式</strong>
+            <span id="task-mode-status">BCM17 · GPIO等待连接</span>
+          </div>
+          <button id="task-mode-button" class="button button-outline" disabled>
+            切换至捡球模式
+          </button>
+        </div>
+
         <div class="lease-row">
           <div>
             <strong id="lease-title">只读观察</strong>
@@ -113,8 +124,8 @@
           </div>
 
           <label class="speed-control">
-            <div><span>手动速度</span><strong id="speed-value">60%</strong></div>
-            <input id="speed-slider" type="range" min="20" max="100" step="5" value="60">
+            <div><span>手动速度</span><strong id="speed-value">100%</strong></div>
+            <input id="speed-slider" type="range" min="20" max="100" step="5" value="100">
           </label>
         </div>
 
@@ -125,6 +136,17 @@
         <span class="estop-icon">!</span>
         <span><strong>紧急停车</strong><small>立即中断所有运动输出</small></span>
       </button>
+
+      <dialog id="estop-reset-dialog" class="safety-dialog">
+        <form method="dialog">
+          <h2>解除紧急停车？</h2>
+          <p>解除后车辆仍保持暂停；确认安全后，还需要再次选择“自动追球”才能恢复自动运行。</p>
+          <div class="dialog-actions">
+            <button class="button" value="cancel">取消</button>
+            <button class="button button-primary" value="confirm">确定解除</button>
+          </div>
+        </form>
+      </dialog>
     </aside>
 
     <section class="status-grid">

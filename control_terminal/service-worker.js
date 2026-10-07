@@ -1,4 +1,4 @@
-const CACHE_NAME = "tennis-rover-terminal-v3";
+const CACHE_NAME = "tennis-rover-terminal-v10";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -10,6 +10,7 @@ const APP_SHELL = [
   "./src/state.js",
   "./src/transport.js",
   "./src/video.js",
+  "./src/overlay.js",
 ];
 
 self.addEventListener("install", (event) => {

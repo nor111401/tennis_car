@@ -73,6 +73,8 @@ Windows/Android ─> WebSocket 网关 ─> 控制权 ─┘
 - `control.request` / `control.release`：申请或释放控制权。
 - `control.heartbeat`：250ms一次，维持手动控制租约。
 - `mode.set`：申请切换 AUTO、MANUAL 或 PAUSED。
+- `task_mode.set`：申请切换作业模式 TRACKING/PICKUP；需要有效控制租约，AUTO模式拒绝
+  手动覆盖（`AUTO_TASK_MODE_MANAGED`），由网关在下沿消失补行期间自动控制。
 - `control.command`：方向、0～1速度、按压状态和租约ID。
 - `safety.estop`：紧急停车锁存或申请解除。
 - `video.request`：请求视频能力与独立认证视频端点。
@@ -82,6 +84,7 @@ Windows/Android ─> WebSocket 网关 ─> 控制权 ─┘
 - `session.welcome`：设备身份和服务端能力。
 - `control.granted` / `control.denied` / `control.released`。
 - `mode.changed`：只有收到该确认，客户端才更新最终模式。
+- `task_mode.changed`：确认追踪/捡球模式；遥测同步提供 GPIO17 配置、在线状态和输出电平。
 - `state.telemetry`：识别、运动、设备健康和当前控制者。
 - `safety.estop`：急停的权威状态。
 - `command.rejected` / `server.error`。
@@ -160,6 +163,11 @@ MANUAL 转 AUTO：
 摄像头与识别运行时、单槽JPEG视频、控制租约、模式仲裁、600ms心跳看门狗、急停锁存、
 遥测发布和 `MotorController` 仲裁。当前部署设置 `TENNIS_MOTOR_ENABLE=1`，但服务仍以
 `AUTO` 启动并直接使用识别结果追球；终端取得控制权后可切换为 MANUAL 或 PAUSED。
+
+追踪/捡球作业模式独立于 AUTO/MANUAL/PAUSED 驾驶模式：默认 TRACKING 将 BCM17 拉低，PICKUP
+将其拉高；BCM17（物理排针11）避开 UART BCM14/15（物理排针8/10）。网关通过 Raspberry Pi
+OS 的 `pinctrl` 设置该脚，并在正常退出时复位为低电平。此脚只用于 3.3V 逻辑信号，不直接
+驱动负载。
 
 真实链路已经验证：Windows 终端可与树莓派完成握手、取得租约、切换 MANUAL、发送
 FORWARD、REVERSE、STOP、切换 PAUSED 并释放租约；独立认证视频通道已收到有效实时JPEG帧。

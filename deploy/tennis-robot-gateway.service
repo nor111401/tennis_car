@@ -7,18 +7,26 @@ Wants=network-online.target
 Type=simple
 User=pi
 Group=pi
-SupplementaryGroups=video dialout
+SupplementaryGroups=video dialout gpio
 WorkingDirectory=/home/pi/tennis
 Environment=PYTHONUNBUFFERED=1
 Environment=TENNIS_GATEWAY_TELEMETRY_SECONDS=0.10
 Environment=TENNIS_GATEWAY_CAMERA_ENABLE=1
+Environment=TENNIS_GATEWAY_CAMERA_WIDTH=960
+Environment=TENNIS_GATEWAY_CAMERA_HEIGHT=720
+Environment=TENNIS_GATEWAY_CAMERA_FPS=30
 Environment=TENNIS_GATEWAY_VIDEO_FPS=15
 Environment=TENNIS_GATEWAY_JPEG_QUALITY=78
+Environment=TENNIS_MODE_GPIO_ENABLE=1
+Environment=TENNIS_MODE_GPIO_PIN=17
+Environment=TENNIS_OBSTACLE_ENABLE=0
 Environment=TENNIS_GATEWAY_BOOT_MODE=AUTO
 Environment=TENNIS_MOTOR_ENABLE=1
 EnvironmentFile=/etc/tennis-robot-gateway.env
 ExecStartPre=+/usr/bin/grep -Eq ^TENNIS_GATEWAY_TOKEN=.{20,}$ /etc/tennis-robot-gateway.env
+ExecStartPre=/usr/bin/pinctrl set 17 op pn dl
 ExecStart=/home/pi/tennis/.venv-gateway/bin/python -m uvicorn robot_gateway.app:app --host 0.0.0.0 --port 8765
+ExecStopPost=/usr/bin/pinctrl set 17 op pn dl
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=5
