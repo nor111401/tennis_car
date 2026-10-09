@@ -3,10 +3,20 @@
 网关已经接入摄像头、识别、遥测、认证视频和统一电机仲裁。基础 systemd 模板设置
 `TENNIS_MOTOR_ENABLE=1`、`TENNIS_MODE_GPIO_ENABLE=1`，并使用 BCM17（物理排针 11）作为
 追踪/捡球模式输出。基础模板的开机模式是`AUTO`；本车持久drop-in负责改为`PAUSED`。
-本车已安装该drop-in，将超声避障设为关闭，并在重启后保持`PAUSED`。
+本车已安装该drop-in，持久超声避障关闭，整机重启后保持`PAUSED`；本次开机另有临时启用覆盖。
 不能单独安装基础模板而遗漏本车PAUSED覆盖。常驻控制端口必须启用认证。
 
 ## 已完成
+
+2026-10-07超声试用：持久`zz-obstacle-commissioning.conf`仍为避障0/开机PAUSED。
+临时模板`tennis-robot-gateway-ultrasonic-trial.conf`只安装到
+`/run/systemd/system/tennis-robot-gateway.service.d/zzz-ultrasonic-trial-paused.conf`，
+使本次开机避障1/开机PAUSED；整机重启后恢复避障0。不要将试用模板安装到`/etc`或删除
+持久安全覆盖。仅当服务PAUSED时备份、停服并安装，并核对启动仍PAUSED。
+用户随后要求不再测试，未继续近/远物体测距或试车；只完成启用与运行状态核对。
+启用后AUTO避障优先于固定3秒收集，≤20cm会取消收集；小球也可能被当作障碍物。
+未锁定近障碍时无回波放行，锁定后必须连续两次实测>30cm才恢复；不是可靠防撞保证。
+此轮不由助手切换AUTO或发转向/前进命令。
 
 - AUTO搜索发现有效但待三帧确认的主候选，先STOP观察最多1秒（`TARGET VERIFY`），
   停稳后的新确认帧才追踪；超时继续下一搜索步，不被重复候选无限续期。持续未确认候选
@@ -35,13 +45,14 @@ Echo 约 66ms；相邻测量至少间隔 70ms。当前采样周期 85ms，使用
 只有完成接线、静止测距以及电机物理安全确认后，才把它设为 `1` 并重启网关。
 已接线且完成静态近/远阈值验证的这台车，使用
 `deploy/tennis-robot-gateway-obstacle-commissioning.conf` 作为持久 systemd drop-in。
-按当前操作要求，该文件设定`TENNIS_OBSTACLE_ENABLE=0`并保留
-`TENNIS_GATEWAY_BOOT_MODE=PAUSED`；AUTO不读取超声测距、不因障碍物停车或转向，BCM23/24
-不由网关占用。前方障碍物可能被撞到，只能在空旷场地、有人看护且急停和物理电源开关可用时
-切换AUTO。只有重新明确授权并完成实车验证后才考虑启用避障或恢复AUTO开机。
+该持久文件设定`TENNIS_OBSTACLE_ENABLE=0`并保留`TENNIS_GATEWAY_BOOT_MODE=PAUSED`。
+没有临时覆盖时AUTO不读取超声，BCM23/24不由网关占用；本次开机临时试用覆盖使开关为1，
+启用采样及AUTO避障。整机重启恢复关闭；普通服务重启仍保留临时试用。
+只能在空旷场地、有人看护且急停和物理电源开关可用时人工切换AUTO；不得恢复AUTO开机。
 AUTO 下有效读数≤20cm即停车、取消捡球并进入避障；每次向左转 200ms 后停车静置、重新
-测距，连续两次新读数>30cm后停车等待新的摄像头画面，再恢复寻球。无 Echo、读数过期或
-GPIO 初始化失败会保持停车；最多 45 个短转向步仍未清障则锁定停车，需切换模式或重启后
+测距，连续两次新读数>30cm后停车等待新的摄像头画面，再恢复寻球。未锁定近障碍时完整
+周期无回波/超范围允许寻球；已锁定后无回波保持停车。异常回波、读数过期或GPIO初始化失败
+也停车；最多45个短转向步仍未清障则锁定停车，需切换模式或重启后
 重新尝试。20/30cm 可通过 `TENNIS_OBSTACLE_ENTER_CM`/`TENNIS_OBSTACLE_CLEAR_CM` 调整；
 Trig/Echo 引脚也可通过 `TENNIS_OBSTACLE_TRIG_PIN`/`TENNIS_OBSTACLE_ECHO_PIN` 调整。
 此单前向传感器无法检查车侧/车后障碍物；地面网球也可能被识别为障碍，安装高度和角度需

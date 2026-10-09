@@ -444,6 +444,16 @@ def recover_candidate_near_target(
         "local_highlight_candidate": True,
         "temporal_recovery_candidate": True,
     }
+    saturation_min = previous.current_item[0].get("saturation_split_min")
+    if saturation_min is not None:
+        # Recover from current, locally separated color evidence, not the
+        # connected background contour that caused the original miss.
+        detection.update(
+            saturation_split_min=saturation_min,
+            background_split_candidate=True,
+            trained_verifier=True,
+            local_highlight_candidate=False,
+        )
     if previous.source == "glare":
         detection["highlight_candidate"] = True
 
@@ -1105,7 +1115,7 @@ def main():
             f"at confidence>={FILTER_CONFIG.trained_confidence_relax:.2f}, "
             f"area>={FILTER_CONFIG.object_area_min:.4f}, "
             f"close_color>={FILTER_CONFIG.close_color_coverage:.2f}, "
-            f"crop={FILTER_CONFIG.crop_expansion:.1f}x, "
+            f"contour_search={FILTER_CONFIG.crop_expansion:.1f}x, "
             f"confirm={FILTER_CONFIG.confirm_frames} frames"
         )
 

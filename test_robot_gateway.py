@@ -444,6 +444,25 @@ class RuntimeSettingsTests(unittest.TestCase):
         self.assertFalse(settings.obstacle_enabled)
         self.assertEqual(settings.boot_mode, GatewayMode.PAUSED)
 
+    def test_ultrasonic_trial_enables_sensor_without_changing_paused_boot(self) -> None:
+        deploy_path = Path(__file__).resolve().parent / "deploy"
+        environment = {}
+        for filename in (
+            "tennis-robot-gateway-obstacle-commissioning.conf",
+            "tennis-robot-gateway-ultrasonic-trial.conf",
+        ):
+            environment.update(dict(
+                line.removeprefix("Environment=").split("=", 1)
+                for line in (deploy_path / filename).read_text(encoding="utf-8").splitlines()
+                if line.startswith("Environment=")
+            ))
+        with patch.dict(os.environ, environment, clear=True):
+            settings = RuntimeSettings.from_environment()
+        self.assertTrue(settings.obstacle_enabled)
+        self.assertEqual(settings.boot_mode, GatewayMode.PAUSED)
+        self.assertEqual((settings.obstacle_trigger_pin, settings.obstacle_echo_pin), (23, 24))
+        self.assertEqual((settings.obstacle_enter_cm, settings.obstacle_clear_cm), (20, 30))
+
     def test_obstacle_pin_collision_and_thresholds_are_rejected(self) -> None:
         with patch.dict(os.environ, {"TENNIS_OBSTACLE_ECHO_PIN": "17"}, clear=True):
             with self.assertRaisesRegex(ValueError, "must differ"):

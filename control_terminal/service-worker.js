@@ -1,8 +1,9 @@
-const CACHE_NAME = "tennis-rover-terminal-v10";
+const CACHE_NAME = "tennis-rover-terminal-v13";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./styles.css",
+  "./console-light.css",
   "./manifest.webmanifest",
   "./icons/app-icon.svg",
   "./src/app.js",

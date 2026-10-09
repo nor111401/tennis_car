@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -42,6 +43,105 @@ DETECTION = {
 
 
 class CandidateFilterTests(unittest.TestCase):
+    def _single_ball_touching_background(self):
+        image = np.zeros((240, 240, 3), dtype=np.uint8)
+        cv2.rectangle(image, (20, 60), (220, 90), (100, 135, 90), -1)
+        cv2.circle(image, (120, 120), 30, (210, 255, 40), -1)
+        # Component starts at (20,60), padding=16; local ball center=(116,76).
+        circles = np.array([[[116.0, 76.0, 30.0]]], dtype=np.float32)
+        with patch(
+            "tennis_candidate_filter.cv2.HoughCircles",
+            side_effect=[None, circles],
+        ):
+            boxes = find_color_candidate_boxes(image, CONFIG, 1000)
+        return image, boxes
+
+    def test_single_ball_on_color_background_gets_local_saturation_proposal(self):
+        _, boxes = self._single_ball_touching_background()
+        children = [box for box in boxes if box.get("background_split_candidate")]
+        self.assertGreaterEqual(len(children), 1, boxes)
+        self.assertFalse(children[0].get("highlight_candidate"))
+        self.assertIsNotNone(children[0].get("saturation_split_min"))
+        self.assertAlmostEqual(children[0]["x"] + children[0]["width"] / 2, 500, delta=3)
+        self.assertTrue(any(box.get("circle_split_parent_candidate") for box in boxes))
+
+    def test_background_split_requires_trained_verifier(self):
+        image, boxes = self._single_ball_touching_background()
+        child = next(box for box in boxes if box.get("background_split_candidate"))
+        metrics = evaluate_candidate(image, child, 1000, 1000, CONFIG)
+        self.assertFalse(metrics.accepted)
+        self.assertEqual(metrics.reasons, ("requires_verifier",))
+
+    def test_background_split_uses_ordinary_confidence_not_glare_threshold(self):
+        image, boxes = self._single_ball_touching_background()
+        child = next(box for box in boxes if box.get("background_split_candidate"))
+        child.update(trained_verifier=True, value=0.69)
+        metrics = evaluate_candidate(image, child, 1000, 1000, CONFIG)
+        self.assertEqual(metrics.reasons, ("confidence",))
+        child["value"] = 0.80
+        self.assertTrue(evaluate_candidate(image, child, 1000, 1000, CONFIG).accepted)
+
+    def test_verified_single_child_survives_when_background_parent_fails(self):
+        image, boxes = self._single_ball_touching_background()
+        for box in boxes:
+            box.update(trained_verifier=True, value=0.80 if box.get("background_split_candidate") else 0.10)
+        accepted = resolve_verified_circle_splits([
+            (box, metrics) for box in boxes
+            if (metrics := evaluate_candidate(image, box, 1000, 1000, CONFIG)).accepted
+        ])
+        self.assertEqual(len(accepted), 1)
+        self.assertTrue(accepted[0][0].get("background_split_candidate"))
+        self.assertLess(accepted[0][1].object_area_ratio, 0.06)
+
+    def test_background_single_circle_does_not_duplicate_valid_parent(self):
+        image, boxes = self._single_ball_touching_background()
+        child = next(box for box in boxes if box.get("background_split_candidate"))
+        child.update(trained_verifier=True, value=0.80)
+        parent = next(box for box in boxes if box.get("circle_split_parent_candidate"))
+        # Resolve policy receives already-accepted parents, independently of
+        # this deliberately elongated test image's strict shape rejection.
+        parent_metrics = evaluate_candidate(image, child, 1000, 1000, CONFIG)
+        accepted = resolve_verified_circle_splits([(parent, parent_metrics), (child, parent_metrics)])
+        self.assertEqual(len(accepted), 1)
+        self.assertIs(accepted[0][0], parent)
+
+    def test_saturation_alternatives_are_one_ball_after_model_validation(self):
+        image, boxes = self._single_ball_touching_background()
+        children = [box for box in boxes if box.get("background_split_candidate")]
+        self.assertGreater(len(children), 1)
+        for index, box in enumerate(children):
+            box.update(trained_verifier=True, value=0.80 + index * 0.01)
+        accepted = resolve_verified_circle_splits([
+            (box, evaluate_candidate(image, box, 1000, 1000, CONFIG)) for box in children
+        ])
+        self.assertEqual(len(accepted), 1)
+        self.assertIs(accepted[0][0], children[-1])
+
+    def test_verified_color_child_replaces_inflated_background_parent(self):
+        image, boxes = self._single_ball_touching_background()
+        parent = next(box for box in boxes if box.get("circle_split_parent_candidate"))
+        child = next(box for box in boxes if box.get("background_split_candidate"))
+        child.update(trained_verifier=True, value=0.95)
+        metrics = evaluate_candidate(image, child, 1000, 1000, CONFIG)
+        parent_metrics = replace(metrics, object_area_ratio=metrics.object_area_ratio * 2)
+        accepted = resolve_verified_circle_splits([(parent, parent_metrics), (child, metrics)])
+        self.assertEqual(len(accepted), 1)
+        self.assertIs(accepted[0][0], child)
+
+    def test_near_square_irregular_background_can_also_be_split(self):
+        image = np.zeros((240, 240, 3), dtype=np.uint8)
+        cv2.rectangle(image, (94, 80), (155, 95), (100, 135, 90), -1)
+        cv2.circle(image, (120, 120), 30, (210, 255, 40), -1)
+        with patch("tennis_candidate_filter.cv2.HoughCircles", return_value=None):
+            boxes = find_color_candidate_boxes(image, CONFIG, 1000)
+        self.assertTrue(any(box.get("saturation_split_min") for box in boxes), boxes)
+
+    def test_white_background_without_color_cannot_use_saturation_split(self):
+        image = np.full((240, 240, 3), 220, dtype=np.uint8)
+        with patch("tennis_candidate_filter.cv2.HoughCircles", return_value=None):
+            boxes = find_color_candidate_boxes(image, CONFIG, 1000)
+        self.assertFalse(any(box.get("background_split_candidate") for box in boxes))
+
     def test_confirmed_ball_keeps_bottom_exit_observation_field(self) -> None:
         image = np.zeros((200, 200, 3), dtype=np.uint8)
         cv2.circle(image, (100, 100), 48, (210, 255, 40), -1)

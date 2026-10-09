@@ -25,6 +25,26 @@ except ModuleNotFoundError:
     "optional model-training dependencies are not installed",
 )
 class AnnotatedTrainingDataTests(unittest.TestCase):
+    def test_explicit_background_is_negative_without_expanding_into_ball(self):
+        from tennis_ball_verifier import extract_features
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            image = np.zeros((60, 80, 3), dtype=np.uint8)
+            image[10:30, 20:40] = (210, 255, 40)
+            image[30:50, 20:40] = (100, 120, 100)
+            Image.fromarray(image).save(root / "scene.png")
+            (root / "scene.json").write_text(json.dumps({
+                "image": "scene.png", "width": 80, "height": 60,
+                "objects": [{"label": "background", "bbox": {"x": 20, "y": 30, "width": 20, "height": 20}}],
+            }), encoding="utf-8")
+            features, labels, counts = build_annotated_positive_samples(
+                root, augment=False, include_background=True,
+            )
+            self.assertEqual(labels, [0])
+            self.assertEqual(counts["background_objects"], 1)
+            np.testing.assert_array_equal(features[0], extract_features(image[30:50, 20:40]))
+            self.assertEqual(build_annotated_positive_samples(root, augment=False)[1], [])
+
     def test_each_annotated_ball_becomes_a_positive_sample(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

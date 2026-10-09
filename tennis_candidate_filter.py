@@ -223,12 +223,47 @@ class CandidateMetrics:
 def resolve_verified_circle_splits(
     candidates: list[tuple[dict, CandidateMetrics]],
 ) -> list[tuple[dict, CandidateMetrics]]:
-    """Prefer verified child circles only when at least two survived.
+    """Resolve verified circles and strictly shaped color separations.
 
     Circle proposals are created before the trained verifier runs. Keeping
     the original connected component until this point prevents two weak or
     false Hough responses from deleting an otherwise valid color candidate.
     """
+    # Several saturation levels (or a circle plus color crop) may propose the
+    # same physical ball. Deduplicate only after the model/shape checks so a
+    # low-score loose crop cannot hide a better, tighter one. True overlapping
+    # sibling balls keep their separate centers and remain separate instances.
+    unique = []
+    for item in sorted(candidates, key=lambda item: float(item[0]["value"]), reverse=True):
+        box = item[0]
+        duplicate = False
+        for other, _ in unique:
+            if not (box.get("background_split_candidate") or other.get("background_split_candidate")):
+                continue
+            if not set(box.get("circle_split_parent_ids", ())) & set(other.get("circle_split_parent_ids", ())):
+                continue
+            side = max(float(box["width"]), float(box["height"]))
+            other_side = max(float(other["width"]), float(other["height"]))
+            distance = math.hypot(
+                box["x"] + box["width"] / 2 - other["x"] - other["width"] / 2,
+                box["y"] + box["height"] / 2 - other["y"] - other["height"] / 2,
+            )
+            if (
+                0.5 <= side / max(other_side, 1e-6) <= 2.0
+                and distance <= 0.35 * min(side, other_side)
+            ):
+                duplicate = True
+                break
+        if not duplicate:
+            unique.append(item)
+    retained_ids = {id(item[0]) for item in unique}
+    candidates = [item for item in candidates if id(item[0]) in retained_ids]
+
+    parent_items = {
+        box.get("circle_split_parent_id"): (box, metrics)
+        for box, metrics in candidates
+        if box.get("circle_split_parent_candidate")
+    }
     parents = {
         box.get("circle_split_parent_id")
         for box, _ in candidates
@@ -247,6 +282,18 @@ def resolve_verified_circle_splits(
         for parent_id, children in children_by_parent.items()
         if len(children) >= 2
     }
+    # A strongly shaped, model-verified *real color* child is different from
+    # a speculative single Hough circle. If its parent includes much more
+    # background/reflection, use the child geometry even when the classifier
+    # also trusts the parent. Otherwise pickup would start too early.
+    for parent_id, children in children_by_parent.items():
+        parent_item = parent_items.get(parent_id)
+        if parent_item is not None and any(
+            box.get("saturation_split_min") is not None
+            and parent_item[1].object_area_ratio >= metrics.object_area_ratio * 1.35
+            for box, metrics in children
+        ):
+            verified_splits.add(parent_id)
     resolved = []
     for item in candidates:
         box, _ = item
@@ -1153,6 +1200,112 @@ def _add_local_highlight_pixels(
     return mask
 
 
+def _isolated_saturation_mask(
+    preview_rgb: np.ndarray,
+    color_mask: np.ndarray,
+    saturation_min: int,
+    hsv: np.ndarray | None = None,
+) -> np.ndarray:
+    """Narrow existing color evidence; never introduce new hues or white pixels."""
+    if hsv is None:
+        hsv = cv2.cvtColor(preview_rgb, cv2.COLOR_RGB2HSV)
+    vivid = cv2.inRange(hsv[..., 1], saturation_min, 255)
+    mask = cv2.bitwise_and(color_mask, vivid)
+    kernel = np.ones((3, 3), dtype=np.uint8)
+    return cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+
+def _append_saturation_split_candidates(
+    preview_rgb: np.ndarray,
+    config: CandidateFilterConfig,
+    coordinate_size: int,
+    boxes: list[dict],
+    color_mask: np.ndarray,
+) -> None:
+    """Separate a vivid ball from a less-saturated connected background.
+
+    Only merged/irregular parent blobs are searched, with three bounded saturation
+    levels. Every child retains its source mask threshold for final geometry
+    and must pass the trained verifier at the ordinary confidence threshold.
+    """
+    height, width = color_mask.shape
+    image_area = float(height * width)
+    hsv = None
+    added = 0
+    for parent in [box for box in boxes if box.get("color_candidate")][:8]:
+        px = int(round(parent["x"] * width / coordinate_size))
+        py = int(round(parent["y"] * height / coordinate_size))
+        pw = int(round(parent["width"] * width / coordinate_size))
+        ph = int(round(parent["height"] * height / coordinate_size))
+        if min(pw, ph) < 20:
+            continue
+        x0, y0 = max(0, px - 3), max(0, py - 3)
+        x1, y1 = min(width, px + pw + 3), min(height, py + ph + 3)
+        if max(pw, ph) / max(min(pw, ph), 1) < 1.25:
+            parent_contours, _ = cv2.findContours(
+                color_mask[y0:y1, x0:x1], cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE,
+            )
+            if not parent_contours:
+                continue
+            contour = max(parent_contours, key=cv2.contourArea)
+            area = cv2.contourArea(contour)
+            perimeter = cv2.arcLength(contour, True)
+            hull_area = cv2.contourArea(cv2.convexHull(contour))
+            # Clean round candidates already have the right crop. Near-square
+            # but ragged blobs can still be a ball attached to a background.
+            if (
+                perimeter > 0 and hull_area > 0
+                and 4 * math.pi * area / (perimeter * perimeter) >= 0.75
+                and area / hull_area >= 0.90
+                and config.extent_min <= area / max(pw * ph, 1) <= config.extent_max
+            ):
+                continue
+        if hsv is None:
+            hsv = cv2.cvtColor(preview_rgb, cv2.COLOR_RGB2HSV)
+        for offset in (40, 80, 120):
+            saturation_min = config.saturation_min + offset
+            if saturation_min > 255:
+                continue
+            local_mask = _isolated_saturation_mask(
+                preview_rgb[y0:y1, x0:x1], color_mask[y0:y1, x0:x1],
+                saturation_min, hsv=hsv[y0:y1, x0:x1],
+            )
+            contours, _ = cv2.findContours(local_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:4]:
+                area = float(cv2.contourArea(contour))
+                if not config.object_area_min <= area / image_area <= 0.20:
+                    continue
+                cx, cy, cw, ch = cv2.boundingRect(contour)
+                if cw * ch >= pw * ph * 0.80:
+                    continue
+                perimeter = cv2.arcLength(contour, True)
+                hull_area = cv2.contourArea(cv2.convexHull(contour))
+                if (
+                    perimeter <= 0 or hull_area <= 0
+                    or 4 * math.pi * area / (perimeter * perimeter) < max(0.70, config.circularity_min)
+                    or area / hull_area < max(0.80, config.solidity_min)
+                    or max(cw / max(ch, 1), ch / max(cw, 1)) > min(1.35, config.aspect_max)
+                    or not config.extent_min <= area / (cw * ch) <= config.extent_max
+                ):
+                    continue
+                parent_id = parent.setdefault("circle_split_parent_id", id(parent))
+                parent["circle_split_parent_candidate"] = True
+                boxes.append({
+                    "label": "tennis_ball", "value": 1.0,
+                    "x": (x0 + cx) * coordinate_size / width,
+                    "y": (y0 + cy) * coordinate_size / height,
+                    "width": cw * coordinate_size / width,
+                    "height": ch * coordinate_size / height,
+                    "color_candidate": True,
+                    "background_split_candidate": True,
+                    "saturation_split_min": saturation_min,
+                    "circle_split_parent_ids": (parent_id,),
+                })
+                added += 1
+                if added >= 12:
+                    return
+
+
 def _append_component_circle_candidates(
     preview_rgb: np.ndarray,
     config: CandidateFilterConfig,
@@ -1645,6 +1798,9 @@ def find_color_candidate_boxes(
         mask,
         highlight_mask,
     )
+    _append_saturation_split_candidates(
+        preview_rgb, config, coordinate_size, boxes, mask,
+    )
     return boxes
 
 
@@ -1657,6 +1813,12 @@ def evaluate_candidate(
     color_mask: np.ndarray | None = None,
     highlight_mask: np.ndarray | None = None,
 ) -> CandidateMetrics:
+    # Locally splitting background evidence alone cannot establish a ball.
+    # Color-only fallback cannot use this path without the trained verifier.
+    if detection.get("background_split_candidate") and not detection.get(
+        "trained_verifier"
+    ):
+        return _rejected("requires_verifier")
     confidence = float(detection["value"])
     confidence_threshold = (
         config.glare_confidence_threshold
@@ -1681,6 +1843,10 @@ def evaluate_candidate(
 
     if color_mask is None:
         color_mask = _tennis_color_mask(preview_rgb, config)
+    if detection.get("saturation_split_min") is not None:
+        color_mask = _isolated_saturation_mask(
+            preview_rgb, color_mask, int(detection["saturation_split_min"]),
+        )
     if bool(detection.get("circle_candidate")):
         center_x = int(round(candidate_x))
         center_y = int(round(candidate_y))

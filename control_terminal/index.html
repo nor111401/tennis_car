@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b1118">
+  <meta name="theme-color" content="#f1f6fa">
   <meta name="description" content="网球小车低延迟观察与控制终端">
   <title>Tennis Rover Console</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="icon" href="./icons/app-icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./console-light.css">
 </head>
 <body>
   <header class="topbar">
@@ -49,20 +50,22 @@
         <div class="live-indicator"><span></span><b id="video-status">等待视频</b></div>
       </div>
 
-      <div id="video-stage" class="video-stage">
-        <img id="robot-video" alt="树莓派摄像头实时画面">
-        <div id="video-placeholder" class="video-placeholder">
-          <div class="radar-grid"></div>
-          <div class="horizon-line"></div>
-        </div>
-        <div class="camera-reticle" aria-hidden="true"></div>
-        <div id="target-box" class="target-box" hidden>
-          <span id="target-label">TENNIS 0%</span>
-        </div>
-        <div class="video-badges">
-          <span id="fps-badge">0.0 FPS</span>
-          <span id="latency-badge">-- ms</span>
-          <span id="mode-badge">AUTO</span>
+      <div class="video-viewport">
+        <div id="video-stage" class="video-stage">
+          <img id="robot-video" alt="树莓派摄像头实时画面">
+          <div id="video-placeholder" class="video-placeholder">
+            <div class="radar-grid"></div>
+            <div class="horizon-line"></div>
+          </div>
+          <div class="camera-reticle" aria-hidden="true"></div>
+          <div id="target-box" class="target-box" hidden>
+            <span id="target-label">TENNIS 0%</span>
+          </div>
+          <div class="video-badges">
+            <span id="fps-badge">0.0 FPS</span>
+            <span id="latency-badge">-- ms</span>
+            <span id="mode-badge">AUTO</span>
+          </div>
         </div>
       </div>
 

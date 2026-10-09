@@ -338,6 +338,7 @@ def build_samples(
 def build_annotated_positive_samples(
     root: Path,
     augment: bool,
+    include_background: bool = False,
 ) -> tuple[list[np.ndarray], list[int], dict[str, int]]:
     """Build one positive training target for every annotated ball box.
 
@@ -345,6 +346,9 @@ def build_annotated_positive_samples(
     Explicit annotations let a touching-ball scene contribute both physical
     balls independently without teaching the verifier that their merged blob
     is one object.
+
+    Optional explicit background boxes provide hard negatives from the same
+    training scene, without context expansion into neighboring real balls.
     """
     features: list[np.ndarray] = []
     labels: list[int] = []
@@ -353,6 +357,8 @@ def build_annotated_positive_samples(
         "objects": 0,
         "positive_patches": 0,
     }
+    if include_background:
+        counts.update(background_objects=0, negative_patches=0)
     if not root.exists():
         return features, labels, counts
 
@@ -375,7 +381,10 @@ def build_annotated_positive_samples(
         rng = path_rng(annotation_path)
         frame_objects = 0
         for item in objects:
-            if not isinstance(item, dict) or item.get("label") != "tennis_ball":
+            if not isinstance(item, dict):
+                continue
+            label = item.get("label")
+            if label != "tennis_ball" and not (include_background and label == "background"):
                 continue
             bbox = item.get("bbox")
             if not isinstance(bbox, dict):
@@ -385,6 +394,21 @@ def build_annotated_positive_samples(
             ))
             if box[2] <= 0 or box[3] <= 0:
                 raise ValueError(f"Invalid bbox in {annotation_path}")
+            if label == "background":
+                if box[0] < 0 or box[1] < 0 or box[0] + box[2] > image_width or box[1] + box[3] > image_height:
+                    raise ValueError(f"Background bbox outside image in {annotation_path}")
+                # Do not expand negatives: a reflected ball/background crop
+                # near a real ball must not accidentally include that ball.
+                x, y, width, height = (int(value) for value in box)
+                if width < 1 or height < 1:
+                    raise ValueError(f"Empty background bbox in {annotation_path}")
+                patch = image_rgb[y:y + height, x:x + width]
+                for condition in LIGHTING_CONDITIONS if augment else ("original",):
+                    features.append(extract_features(simulate_lighting(patch, condition, rng)))
+                    labels.append(0)
+                    counts["negative_patches"] += 1
+                counts["background_objects"] += 1
+                continue
             for patch in jittered_positive_patches(
                 image_rgb,
                 box,
@@ -506,6 +530,7 @@ def main() -> None:
         build_annotated_positive_samples(
             args.data / "annotated",
             augment=True,
+            include_background=True,
         )
     )
     train_features.extend(annotated_features)
